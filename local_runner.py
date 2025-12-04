@@ -23,7 +23,7 @@ LANG = {
         "menu_unpack": "1. Unpack words_map",
         "menu_pack": "2. Pack words_map",
         "menu_translate": "3. Translate text",
-        "menu_lang": "4. Switch Language (Tiếng Việt)",
+        "menu_lang": "4. Đổi ngôn ngữ (Tiếng Việt)",
         "menu_exit": "0. Exit",
         "prompt_choice": "Choose an option: ",
         "prompt_words_map": "Enter path or URL to words_map file: ",
@@ -44,7 +44,7 @@ LANG = {
         "menu_unpack": "1. Giải nén words_map",
         "menu_pack": "2. Đóng gói words_map",
         "menu_translate": "3. Dịch văn bản",
-        "menu_lang": "4. Đổi ngôn ngữ (English)",
+        "menu_lang": "4. Switch Language (English)",
         "menu_exit": "0. Thoát",
         "prompt_choice": "Chọn một tùy chọn: ",
         "prompt_words_map": "Nhập đường dẫn hoặc URL đến file words_map: ",
@@ -94,7 +94,7 @@ def prepare_workspace():
 
 def clean_workspace():
     if os.path.exists(WORKS_DIR):
-        shutil.rmtree(WORKS_DIR)
+        shutil.rmtree(WORKS_DIR, ignore_errors=True)
     prepare_workspace()
 
 def task_unpack():
@@ -144,6 +144,7 @@ def task_unpack():
     
     print(t("msg_done"))
     print(f"Output: {zip_path}")
+    print(f"Unpacked text directory: {output_text_dir}")
 
 def task_pack():
     clean_workspace()
@@ -221,12 +222,23 @@ def task_pack():
     final_output = os.path.join(OUTPUT_DIR, "translate_words_map_en")
     shutil.move(merged_file, final_output)
     
+    # 7. Copy diff file
+    diff_src = "./archive/words_map_diff"
+    if os.path.exists(diff_src):
+        shutil.copy(diff_src, final_output + "_diff")
+    
     print(t("msg_done"))
     print(f"Output: {final_output}")
 
 
 def task_translate():
-    source_dir = input(t("prompt_source_dir")).strip().strip("'\"")
+    default_dir = os.path.join(OUTPUT_DIR, "words_map", "text")
+    prompt = f"{t('prompt_source_dir')} [{default_dir}]: "
+    
+    source_dir = input(prompt).strip().strip("'\"")
+    if not source_dir:
+        source_dir = default_dir
+        
     if not os.path.exists(source_dir):
         print(t("msg_file_not_found").format(source_dir))
         return

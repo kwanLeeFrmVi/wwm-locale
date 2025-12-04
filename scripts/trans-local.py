@@ -4,8 +4,10 @@
 import os
 import re
 import sys
+import concurrent.futures
 from datetime import datetime
 
+import time
 from halo import Halo
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -13,14 +15,16 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-system_description = """You are a translator of the game Where Winds Meets. You master Chinese and Vietnamese languages.
-Translate the following Chinese text to Vietnamese accurately, not missing any Chinese word, maintaining the game's tone and context.
-Just response as json, do not add any extra explanation like ```
+system_description = """Bạn là dịch thuật truyện kiếm hiệp Trung Quốc cho trò chơi Where Winds Meets.
+Sử dụng từ Hán Việt thông dụng khi chuyển từng câu từ tiếng Trung sang tiếng Việt, giữ nguyên tên riêng/chiêu thức/binh khí theo phong cách kiếm hiệp.
+Dịch sát nghĩa, không lược bỏ chi tiết, bảo tồn sắc thái kiếm hiệp và cảm xúc nhân vật.
+Phản hồi duy nhất bằng JSON hợp lệ, không kèm theo giải thích hoặc đánh dấu ```.
 """
 
 # Read OS env for api key and base url
 auth_api_key = os.getenv("OR_API_KEY")
 openai_base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+openai_model = os.getenv("OPENAI_MODEL", "google/gemini-pro-1.5-flash-001")
 
 if not auth_api_key:
     print("Error: OR_API_KEY not found in environment variables.")
@@ -69,30 +73,40 @@ def translate_text(spinner, input_file, output_file):
         api_key=auth_api_key,
     )
 
-    try:
-        # Create chat completion with streaming
-        completion = client.chat.completions.create(
-            extra_headers={
-                "X-Title": "WWM Locale Tool",  # Optional. Site title for rankings on openrouter.ai.
-            },
-            model="google/gemini-pro-1.5-flash-001",  # "google/gemini-2.0-flash-001",
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_description,
+    max_retries = 5
+    retry_delay = 2
+
+    for attempt in range(max_retries):
+        try:
+            # Create chat completion with streaming
+            completion = client.chat.completions.create(
+                extra_headers={
+                    "X-Title": "WWM Locale Tool",  # Optional. Site title for rankings on openrouter.ai.
                 },
-                {"role": "user", "content": content_to_translate},
-            ],
-            stream=True,  # Enable streaming
-        )
-    except Exception as e:
-        spinner.fail(f"Network error: {e}")
-        return -1
+                model=openai_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_description,
+                    },
+                    {"role": "user", "content": content_to_translate},
+                ],
+                stream=True,  # Enable streaming
+            )
+            break # Success, exit retry loop
+        except Exception as e:
+            if attempt < max_retries - 1:
+                spinner.warn(f"Network error: {e}. Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                retry_delay *= 2 # Exponential backoff
+            else:
+                spinner.fail(f"Network error: {e}")
+                return -1
 
     translated_text = ""
     try:
         for chunk in completion:
-            if chunk.choices[0].delta.content:
+            if chunk.choices and chunk.choices[0].delta.content:
                 resp_content = chunk.choices[0].delta.content
 
                 translated_text += resp_content
@@ -138,8 +152,8 @@ if __name__ == "__main__":
     # list files in missing folder
     files = os.listdir(missing_folder)
     
-    # Filter only json files
-    json_files = [f for f in files if f.endswith(".json")]
+    # Filter only json files and ignore hidden/metadata files
+    json_files = [f for f in files if f.endswith(".json") and not f.startswith("._")]
     
     if not json_files:
         spinner.warn(f"No JSON files found in '{missing_folder}'.")
@@ -164,14 +178,50 @@ if __name__ == "__main__":
         else:
             output_file = os.path.join(output_folder, new_filename)
 
-        spinner.info(f"[{idx + 1}/{len(json_files)}] Translating {filename}")
-        spinner.start("Waiting for response...")
-        processed_time = translate_text(spinner, input_file, output_file)
-        
-        if processed_time != -1:
-            msg = f"[{idx + 1}/{len(json_files)}] Translation completed in {processed_time:.2f} seconds."
-            spinner.info(msg)
-        else:
-            spinner.warn(f"[{idx + 1}/{len(json_files)}] Translation failed for {filename}.")
+    # Process files in parallel
+    worker_count = int(os.getenv("WORKER_COUNT", "5"))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = []
+        for idx, filename in enumerate(json_files):
+            new_filename = replace_filename_pattern(filename, run_at)
+            input_file = os.path.join(missing_folder, filename)
+
+            if new_filename == filename:
+                output_file = os.path.join(output_folder, f"t{run_at}_{filename}")
+            else:
+                output_file = os.path.join(output_folder, new_filename)
+
+            # Check if output file already exists (Resume capability)
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                spinner.info(f"[{idx + 1}/{len(json_files)}] Skipping {filename} (already translated)")
+                continue
+
+            futures.append(executor.submit(process_file, idx, filename, input_file, output_file, len(json_files)))
+
+        # Wait for all futures to complete
+        for future in concurrent.futures.as_completed(futures):
+            pass
 
     spinner.succeed("All tasks completed.")
+
+def process_file(idx, filename, input_file, output_file, total_files):
+    # Create a new spinner for each thread (or just print since spinner isn't thread-safe)
+    # Using print for thread safety
+    print(f"[{idx + 1}/{total_files}] Translating {filename}...")
+    
+    # We need to pass a dummy spinner or modify translate_text to not use spinner
+    # For simplicity, we'll create a dummy object with .text, .fail, .warn methods
+    class DummySpinner:
+        def __init__(self): self.text = ""
+        def fail(self, msg): print(f"✖ {msg}")
+        def warn(self, msg): print(f"⚠ {msg}")
+        def info(self, msg): print(f"ℹ {msg}")
+        def succeed(self, msg): print(f"✔ {msg}")
+    
+    spinner = DummySpinner()
+    processed_time = translate_text(spinner, input_file, output_file)
+    
+    if processed_time != -1:
+        print(f"✔ [{idx + 1}/{total_files}] Translation completed for {filename} in {processed_time:.2f} seconds.")
+    else:
+        print(f"⚠ [{idx + 1}/{total_files}] Translation failed for {filename}.")
