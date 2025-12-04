@@ -110,9 +110,13 @@ def translate_text(spinner, input_file, output_file):
                 resp_content = chunk.choices[0].delta.content
 
                 translated_text += resp_content
-                spinner.text = " > {}...".format(
-                    resp_content.replace("\n", "").strip()[:35]
-                )
+                # Update spinner with latest content
+                if hasattr(spinner, 'update_text'):
+                    spinner.update_text(translated_text)
+                elif hasattr(spinner, 'text'):
+                     spinner.text = " > {}...".format(
+                        resp_content.replace("\n", "").strip()[:35]
+                    )
     except Exception as e:
         spinner.fail(f"Streaming error: {e}")
         return -1
@@ -131,6 +135,59 @@ def translate_text(spinner, input_file, output_file):
         f.write(translated_text)
 
     return processed_at[4] - started_at[4]
+
+
+def process_file(idx, filename, input_file, output_file, total_files):
+    # Create a new spinner for each thread (or just print since spinner isn't thread-safe)
+    # Using print for thread safety
+    print(f"[{idx + 1}/{total_files}] Translating {filename}...")
+    
+    # We need to pass a dummy spinner or modify translate_text to not use spinner
+    # For simplicity, we'll create a dummy object with .text, .fail, .warn methods
+    class DummySpinner:
+        def __init__(self): self.text = ""
+        def fail(self, msg): print(f"\r✖ {msg}")
+        def warn(self, msg): print(f"\r⚠ {msg}")
+        def info(self, msg): print(f"\rℹ {msg}")
+        def succeed(self, msg): print(f"\r✔ {msg}")
+        def update_text(self, text):
+            # Print streaming update on the same line
+            # Truncate to avoid messing up terminal
+            preview = text.replace("\n", " ").strip()[-40:]
+            print(f"\r⠙ {filename}: ...{preview}", end="", flush=True)
+    
+    spinner = DummySpinner()
+    processed_time = translate_text(spinner, input_file, output_file)
+    
+    if processed_time != -1:
+        # Read the first few characters of the translated file for preview
+        try:
+            with open(output_file, "r", encoding="utf-8") as f:
+                content = f.read()
+                # Try to parse JSON to get values
+                import json
+                try:
+                    data = json.loads(content)
+                    # Assuming the structure is key-value, get the first value or the whole dict
+                    if isinstance(data, dict):
+                        # Get the first string value found
+                        values = [str(v) for v in data.values() if isinstance(v, str)]
+                        if values:
+                            preview = values[0]
+                        else:
+                            preview = str(data)
+                    else:
+                        preview = str(data)
+                except:
+                    preview = content.replace("\n", " ").strip()
+                
+                preview = preview[:60] + "..." if len(preview) > 60 else preview
+        except:
+            preview = "..."
+            
+        print(f"✔ [{idx + 1}/{total_files}] {filename} -> {preview} ({processed_time:.2f}s)")
+    else:
+        print(f"⚠ [{idx + 1}/{total_files}] Translation failed for {filename}.")
 
 
 if __name__ == "__main__":
@@ -168,15 +225,7 @@ if __name__ == "__main__":
         f"{now.strftime('%M')}"  # Minute
     )
 
-    for idx, filename in enumerate(json_files):
-        new_filename = replace_filename_pattern(filename, run_at)
 
-        input_file = os.path.join(missing_folder, filename)
-
-        if new_filename == filename:
-            output_file = os.path.join(output_folder, f"t{run_at}_{filename}")
-        else:
-            output_file = os.path.join(output_folder, new_filename)
 
     # Process files in parallel
     worker_count = int(os.getenv("WORKER_COUNT", "5"))
@@ -192,9 +241,24 @@ if __name__ == "__main__":
                 output_file = os.path.join(output_folder, new_filename)
 
             # Check if output file already exists (Resume capability)
+            # The original script generates filenames like p{run_at}_{number}.json
+            # We need to check if ANY file with the same ID exists in the output folder to avoid re-translating.
+            
+            # Extract ID from filename (e.g., entry_00123.json -> 00123)
+            match = re.match(r"^.+?_(\d+)\.json$", filename)
+            if match:
+                file_id = match.group(1)
+                # Look for any file ending with _{file_id}.json in output_folder
+                # This covers both p{run_at}_{id}.json and t{run_at}_{filename}
+                existing_files = [f for f in os.listdir(output_folder) if f.endswith(f"_{file_id}.json")]
+                if existing_files:
+                     spinner.info(f"[{idx + 1}/{len(json_files)}] Skipping {filename} (already translated as {existing_files[0]})")
+                     continue
+            
+            # Fallback check for exact filename match if pattern doesn't match
             if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-                spinner.info(f"[{idx + 1}/{len(json_files)}] Skipping {filename} (already translated)")
-                continue
+                 spinner.info(f"[{idx + 1}/{len(json_files)}] Skipping {filename} (already translated)")
+                 continue
 
             futures.append(executor.submit(process_file, idx, filename, input_file, output_file, len(json_files)))
 
@@ -204,24 +268,4 @@ if __name__ == "__main__":
 
     spinner.succeed("All tasks completed.")
 
-def process_file(idx, filename, input_file, output_file, total_files):
-    # Create a new spinner for each thread (or just print since spinner isn't thread-safe)
-    # Using print for thread safety
-    print(f"[{idx + 1}/{total_files}] Translating {filename}...")
-    
-    # We need to pass a dummy spinner or modify translate_text to not use spinner
-    # For simplicity, we'll create a dummy object with .text, .fail, .warn methods
-    class DummySpinner:
-        def __init__(self): self.text = ""
-        def fail(self, msg): print(f"✖ {msg}")
-        def warn(self, msg): print(f"⚠ {msg}")
-        def info(self, msg): print(f"ℹ {msg}")
-        def succeed(self, msg): print(f"✔ {msg}")
-    
-    spinner = DummySpinner()
-    processed_time = translate_text(spinner, input_file, output_file)
-    
-    if processed_time != -1:
-        print(f"✔ [{idx + 1}/{total_files}] Translation completed for {filename} in {processed_time:.2f} seconds.")
-    else:
-        print(f"⚠ [{idx + 1}/{total_files}] Translation failed for {filename}.")
+
