@@ -65,7 +65,7 @@ def translate_text(spinner, input_file, output_file):
             extra_headers={
                 "X-Title": "WWM Locale Tool",  # Optional. Site title for rankings on openrouter.ai.
             },
-            model="google/gemini-2.5-flash-lite-preview-09-2025",  # "google/gemini-2.0-flash-001",
+            model="google/gemini-pro-1.5-flash-001",  # "google/gemini-2.0-flash-001",
             messages=[
                 {
                     "role": "system",
