@@ -1,0 +1,10 @@
+[project]
+name = "wwm-locale"
+version = "0.1.0"
+description = "Local runner for WWM locale tools"
+dependencies = [
+    "halo",
+    "openai",
+    "python-dotenv",
+]
+requires-python = ">=3.9"
