@@ -207,7 +207,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # list files in missing folder
-    files = os.listdir(missing_folder)
+    files = sorted(os.listdir(missing_folder))
     
     # Filter only json files and ignore hidden/metadata files
     json_files = [f for f in files if f.endswith(".json") and not f.startswith("._")]
@@ -256,9 +256,13 @@ if __name__ == "__main__":
                      continue
             
             # Fallback check for exact filename match if pattern doesn't match
-            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-                 spinner.info(f"[{idx + 1}/{len(json_files)}] Skipping {filename} (already translated)")
-                 continue
+            # For non-numbered files, the output is t{run_at}_{filename}
+            # We should check if ANY file ending with _{filename} exists
+            else:
+                existing_files = [f for f in os.listdir(output_folder) if f.endswith(f"_{filename}")]
+                if existing_files:
+                    spinner.info(f"[{idx + 1}/{len(json_files)}] Skipping {filename} (already translated as {existing_files[0]})")
+                    continue
 
             futures.append(executor.submit(process_file, idx, filename, input_file, output_file, len(json_files)))
 
