@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import concurrent.futures
+import json
 from datetime import datetime
 
 import time
@@ -15,10 +16,20 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-system_description = """Bạn là dịch thuật truyện kiếm hiệp Trung Quốc cho trò chơi Where Winds Meets.
-Sử dụng từ Hán Việt thông dụng khi chuyển từng câu từ tiếng Trung sang tiếng Việt, giữ nguyên tên riêng/chiêu thức/binh khí theo phong cách kiếm hiệp.
-Dịch sát nghĩa, không lược bỏ chi tiết, bảo tồn sắc thái kiếm hiệp và cảm xúc nhân vật.
-Phản hồi duy nhất bằng JSON hợp lệ, không kèm theo giải thích hoặc đánh dấu ```.
+system_description = """Bạn là một dịch giả truyện Kiếm Hiệp Trung Quốc cho tựa game Where Winds Meets (Yến Vân Thập Lục Thanh).
+Sử dụng các từ Hán-Việt thông dụng khi dịch từng câu từ tiếng Trung sang tiếng Việt.
+Đối với tên riêng, chiêu thức, vũ khí, địa danh hoặc thuật ngữ kỹ thuật: BẠN PHẢI chuyển đổi chúng sang âm Hán-Việt tương ứng.
+TUYỆT ĐỐI KHÔNG giữ lại bất kỳ ký tự tiếng Trung nào trong kết quả.
+Nếu không thể dịch nghĩa, hãy phiên âm toàn bộ văn bản sang Hán-Việt.
+Không phản hồi bằng tiếng Trung hoặc dùng ký tự Trung Quốc. Chỉ phản hồi bằng tiếng Việt.
+CHỈ trả về định dạng JSON hợp lệ, không giải thích hoặc dùng dấu ```.
+Ví dụ:
+- Sai: "偷師-狂瀾-弟子1-站崗" -> "偷師-Cuồng Lan-Đệ tử 1-Trạm Cương" (Vẫn chứa ký tự Trung)
+- Đúng: "偷師-狂瀾-弟子1-站崗" -> "Thâu Sư - Cuồng Lan - Đệ Tử 1 - Trạm Cương" (Đã chuyển hoàn toàn sang Hán-Việt)
+- Sai: "Mèo con vô助" -> "Mèo con vô助" (Giữ lại ký tự gốc)
+- Đúng: "Mèo con vô助" -> "Mèo con vô trợ" (Dịch nghĩa hoặc dùng Hán-Việt)
+- Sai: "蛐蛐" -> "蛐蛐"
+- Đúng: "蛐蛐" -> "Khúc Khúc" (Hoặc "Dế mèn" nếu hiểu nghĩa)
 """
 
 # Read OS env for api key and base url
@@ -42,11 +53,88 @@ def replace_filename_pattern(filename, out_prefix):
     return filename
 
 
+def contains_chinese(text):
+    """Check if text contains Chinese characters."""
+    return bool(re.search(r'[\u4e00-\u9fff]', text))
+
+def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retries=3):
+    """Translate a dictionary chunk with validation."""
+    json_str = json.dumps(chunk_data, ensure_ascii=False)
+    
+    for attempt in range(max_retries):
+        try:
+            # Create chat completion
+            # We use stream=False for chunks to easier validate the whole JSON object
+            # But we can simulate streaming if needed, or just wait.
+            # Given the requirement for validation, getting the whole response is safer.
+            
+            completion = client.chat.completions.create(
+                extra_headers={
+                    "X-Title": "WWM Locale Tool",
+                },
+                extra_body={
+                    "reasoning": {
+                        "effort": "low"
+                    }
+                },
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt
+                    },
+                    {"role": "user", "content": json_str},
+                ],
+                stream=False,
+            )
+            
+            resp_content = completion.choices[0].message.content
+            
+            # Clean up markdown code blocks if present
+            cleaned_content = resp_content.replace("```json", "").replace("```", "").strip()
+            
+            try:
+                translated_chunk = json.loads(cleaned_content)
+            except json.JSONDecodeError:
+                if attempt < max_retries - 1:
+                    spinner.warn(f"Invalid JSON response. Retrying ({attempt + 1}/{max_retries})...")
+                    continue
+                else:
+                    spinner.fail(f"Failed to parse JSON after {max_retries} attempts.")
+                    return None
+
+            # Validate for Chinese characters
+            has_chinese = False
+            for k, v in translated_chunk.items():
+                if isinstance(v, str) and contains_chinese(v):
+                    has_chinese = True
+                    spinner.warn(f"Validation failed at key '{k}': '{v}'")
+                    break
+            
+            if has_chinese:
+                if attempt < max_retries - 1:
+                    spinner.warn(f"Response contains Chinese characters. Retrying ({attempt + 1}/{max_retries})...")
+                    continue
+                else:
+                    spinner.fail(f"Failed validation (contains Chinese) after {max_retries} attempts.")
+                    return None
+            
+            return translated_chunk
+
+        except Exception as e:
+            if attempt < max_retries - 1:
+                spinner.warn(f"Error: {e}. Retrying in 2s...")
+                time.sleep(2)
+            else:
+                spinner.fail(f"Failed after {max_retries} attempts. Error: {e}")
+                return None
+    return None
+
 def translate_text(spinner, input_file, output_file):
     # current started time
     started_at = os.times()
 
-    # Path to output file (assuming same directory as input, with 'translated_' prefix)
+    # Path to output file
     output_file = output_file or os.path.join(
         os.path.dirname(input_file), "translated_" + os.path.basename(input_file)
     )
@@ -57,12 +145,23 @@ def translate_text(spinner, input_file, output_file):
         return -1
 
     # Read content from input file
-    with open(input_file, "r", encoding="utf-8") as f:
-        content_to_translate = f.read().strip()
-
-    if not content_to_translate:
-        spinner.warn(f"Input file {input_file} is empty.")
-        return 0
+    try:
+        with open(input_file, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            if not content:
+                spinner.warn(f"Input file {input_file} is empty.")
+                return 0
+            
+            # Parse JSON
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError:
+                spinner.fail(f"Input file {input_file} is not valid JSON.")
+                return -1
+                
+    except Exception as e:
+        spinner.fail(f"Error reading file: {e}")
+        return -1
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
@@ -73,67 +172,41 @@ def translate_text(spinner, input_file, output_file):
         api_key=auth_api_key,
     )
 
-    max_retries = 5
-    retry_delay = 2
-
-    for attempt in range(max_retries):
-        try:
-            # Create chat completion with streaming
-            completion = client.chat.completions.create(
-                extra_headers={
-                    "X-Title": "WWM Locale Tool",  # Optional. Site title for rankings on openrouter.ai.
-                },
-                model=openai_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_description,
-                    },
-                    {"role": "user", "content": content_to_translate},
-                ],
-                stream=True,  # Enable streaming
-            )
-            
-            # Reset translated text for this attempt
-            translated_text = ""
-            
-            for chunk in completion:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    resp_content = chunk.choices[0].delta.content
-
-                    translated_text += resp_content
-                    # Update spinner with latest content
-                    if hasattr(spinner, 'update_text'):
-                        spinner.update_text(translated_text)
-                    elif hasattr(spinner, 'text'):
-                         spinner.text = " > {}...".format(
-                            resp_content.replace("\n", "").strip()[:35]
-                        )
-            
-            # If we get here, streaming finished successfully
-            break 
-            
-        except Exception as e:
-            if attempt < max_retries - 1:
-                spinner.warn(f"Error: {e}. Retrying in {retry_delay}s...")
-                time.sleep(retry_delay)
-                retry_delay *= 2 # Exponential backoff
-            else:
-                spinner.fail(f"Failed after {max_retries} attempts. Error: {e}")
-                return -1
+    # Chunking configuration
+    CHUNK_SIZE = 20 # Number of items per chunk
+    items = list(data.items())
+    total_items = len(items)
+    translated_data = {}
+    
+    # Process chunks
+    for i in range(0, total_items, CHUNK_SIZE):
+        chunk_items = items[i : i + CHUNK_SIZE]
+        chunk_dict = dict(chunk_items)
+        
+        # Update spinner
+        if hasattr(spinner, 'text'):
+            spinner.text = f"Translating chunk {i//CHUNK_SIZE + 1}/{(total_items + CHUNK_SIZE - 1)//CHUNK_SIZE}..."
+        
+        translated_chunk = translate_chunk(client, openai_model, system_description, chunk_dict, spinner)
+        
+        if translated_chunk:
+            translated_data.update(translated_chunk)
+        else:
+            spinner.warn(f"Chunk {i//CHUNK_SIZE + 1} failed. Skipping...")
+            # Optionally keep original or empty? 
+            # Keeping original might be better than losing data, but user wants to avoid Chinese.
+            # Let's keep original but maybe mark it? Or just keep original so we don't break the game.
+            # But the user specifically wants to clear false files.
+            # If we fail, maybe we shouldn't write the file?
+            # Let's write what we have, maybe?
+            # For now, let's just update with original if translation fails, so keys are preserved.
+            translated_data.update(chunk_dict)
 
     processed_at = os.times()
 
     # Write the full translated text to output file
     with open(output_file, "w", encoding="utf-8") as f:
-        # remove leading and trailing ```
-        translated_text = translated_text.strip()
-        i1 = translated_text.find("{")
-        i2 = translated_text.rfind("}")
-        if i1 != -1 and i2 != -1:
-            translated_text = translated_text[i1 : i2 + 1]
-
-        f.write(translated_text)
+        json.dump(translated_data, f, ensure_ascii=False, indent=4)
 
     return processed_at[4] - started_at[4]
 
@@ -230,7 +303,8 @@ if __name__ == "__main__":
 
     # Process files in parallel
     worker_count = int(os.getenv("WORKER_COUNT", "5"))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
+    try:
         futures = []
         for idx, filename in enumerate(json_files):
             new_filename = replace_filename_pattern(filename, run_at)
@@ -271,6 +345,12 @@ if __name__ == "__main__":
         for future in concurrent.futures.as_completed(futures):
             pass
 
-    spinner.succeed("All tasks completed.")
+        spinner.succeed("All tasks completed.")
+
+    except KeyboardInterrupt:
+        print("\n")
+        spinner.fail("User interrupted.")
+        executor.shutdown(wait=False)
+        os._exit(1)
 
 
