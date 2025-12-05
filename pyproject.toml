@@ -6,5 +6,6 @@ dependencies = [
     "halo",
     "openai",
     "python-dotenv",
+    "pydantic",
 ]
 requires-python = ">=3.9"
