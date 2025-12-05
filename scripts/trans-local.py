@@ -93,33 +93,34 @@ def translate_text(spinner, input_file, output_file):
                 ],
                 stream=True,  # Enable streaming
             )
-            break # Success, exit retry loop
+            
+            # Reset translated text for this attempt
+            translated_text = ""
+            
+            for chunk in completion:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    resp_content = chunk.choices[0].delta.content
+
+                    translated_text += resp_content
+                    # Update spinner with latest content
+                    if hasattr(spinner, 'update_text'):
+                        spinner.update_text(translated_text)
+                    elif hasattr(spinner, 'text'):
+                         spinner.text = " > {}...".format(
+                            resp_content.replace("\n", "").strip()[:35]
+                        )
+            
+            # If we get here, streaming finished successfully
+            break 
+            
         except Exception as e:
             if attempt < max_retries - 1:
-                spinner.warn(f"Network error: {e}. Retrying in {retry_delay}s...")
+                spinner.warn(f"Error: {e}. Retrying in {retry_delay}s...")
                 time.sleep(retry_delay)
                 retry_delay *= 2 # Exponential backoff
             else:
-                spinner.fail(f"Network error: {e}")
+                spinner.fail(f"Failed after {max_retries} attempts. Error: {e}")
                 return -1
-
-    translated_text = ""
-    try:
-        for chunk in completion:
-            if chunk.choices and chunk.choices[0].delta.content:
-                resp_content = chunk.choices[0].delta.content
-
-                translated_text += resp_content
-                # Update spinner with latest content
-                if hasattr(spinner, 'update_text'):
-                    spinner.update_text(translated_text)
-                elif hasattr(spinner, 'text'):
-                     spinner.text = " > {}...".format(
-                        resp_content.replace("\n", "").strip()[:35]
-                    )
-    except Exception as e:
-        spinner.fail(f"Streaming error: {e}")
-        return -1
 
     processed_at = os.times()
 
