@@ -22,3 +22,9 @@ Ví dụ:
 
 - Gốc: "至于这沧浪剑谱，其中所载剑法实在凌厉，与我眼下所求已大不相同，留在我身边也是无用。"
 - Dịch: "Về đến cuốn Kinh Thập Lục Thanh, các chiêu kiếm ghi chép tuy sắc bén hung hiểm, nhưng khác hẳn thứ ta cần; giữ bên mình cũng vô ích."
+
+- Gốc: "随战令成长获得丰厚奖励"
+- Dịch: "Nhận phần thưởng hậu hĩnh khi bạn vượt qua trận chiến"
+
+- Gốc: "暂无可邀请玩家"
+- Dịch: "Hiện tại không có người chơi nào có thể mời"
