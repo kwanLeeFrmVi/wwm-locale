@@ -16,7 +16,18 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-system_description = """Bạn là một dịch giả chuyên nghiệp cho tựa game Kiếm Hiệp "Where Winds Meets" (Yến Vân Thập Lục Thanh).
+def get_system_prompt():
+    """Read system prompt from local file or return default."""
+    prompt_path = os.path.join(os.path.dirname(__file__), "system_prompt.txt")
+    if os.path.exists(prompt_path):
+        try:
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception as e:
+            print(f"Warning: Failed to read system_prompt.txt: {e}")
+            
+    # Fallback prompt if file not found
+    return """Bạn là một dịch giả chuyên nghiệp cho tựa game Kiếm Hiệp "Where Winds Meets" (Yến Vân Thập Lục Thanh).
 Nhiệm vụ của bạn là dịch văn bản từ tiếng Trung sang tiếng Việt, đảm bảo văn phong tự nhiên, dễ hiểu cho người đọc, phù hợp với bối cảnh cổ trang nhưng không lạm dụng từ Hán-Việt.
 Quy tắc dịch thuật:
 1. **Văn phong**: Dịch nghĩa sang tiếng Việt thuần Việt, tự nhiên, trôi chảy cho các câu thoại, mô tả. Tránh dịch word-by-word (âm Hán-Việt) gây khó hiểu.
@@ -27,16 +38,6 @@ Quy tắc dịch thuật:
    - Các thuật ngữ tu tiên, kiếm hiệp đặc thù.
 3. **Tuyệt đối KHÔNG để lại ký tự tiếng Trung**: Nếu không dịch được nghĩa, hãy phiên âm Hán-Việt, nhưng ưu tiên dịch nghĩa nếu có thể.
 4. **Định dạng**: Chỉ trả về JSON hợp lệ. Không bao gồm markdown hay giải thích thêm.
-
-Ví dụ:
-- Gốc: "偷師-狂瀾-弟子1-站崗"
-- Dịch: "Thâu Sư - Cuồng Lan - Đệ Tử 1 - Trạm Cương" (Tên riêng/Thuật ngữ -> Hán Việt)
-
-- Gốc: "entity表-刘铭册"
-- Dịch: "bảng thực thể - Lưu Minh Sách"
-
-- Gốc: "既然他觉得自己是狗，那我也扮成狗试试。"
-- Dịch: "Đã vậy hắn cảm thấy mình là chó, thì ta cũng thử đóng giả làm chó xem sao." (Câu thoại -> Dịch nghĩa tự nhiên)
 """
 
 # Read OS env for api key and base url
@@ -192,7 +193,10 @@ def translate_text(spinner, input_file, output_file):
     if hasattr(spinner, 'text'):
         spinner.text = f"Translating {os.path.basename(input_file)}..."
 
-    translated_data = translate_chunk(client, openai_model, system_description, data, spinner)
+    
+    # Get the latest system prompt
+    current_system_prompt = get_system_prompt()
+    translated_data = translate_chunk(client, openai_model, current_system_prompt, data, spinner)
 
     if not translated_data:
         spinner.warn(f"Translation failed for {os.path.basename(input_file)}. Keeping original data.")
@@ -298,7 +302,10 @@ if __name__ == "__main__":
 
 
     # Process files in parallel
-    worker_count = int(os.getenv("WORKER_COUNT", "5"))
+    # Process files in parallel
+    # Default to CPU count, fallback to 1 if undetermined
+    default_workers = os.cpu_count() or 1
+    worker_count = int(os.getenv("WORKER_COUNT", str(default_workers)))
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
     try:
         futures = []

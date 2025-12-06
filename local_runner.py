@@ -243,9 +243,11 @@ def task_translate():
         print(t("msg_file_not_found").format(source_dir))
         return
 
-    output_dir = input(t("prompt_output_dir")).strip().strip("'\"")
+    default_out = "./dich-xong"
+    prompt_out = f"{t('prompt_output_dir')} [{default_out}]: "
+    output_dir = input(prompt_out).strip().strip("'\"")
     if not output_dir:
-        output_dir = os.path.join(source_dir, "translated")
+        output_dir = default_out
 
     print(t("msg_translating"))
     
