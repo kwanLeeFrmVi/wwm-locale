@@ -16,20 +16,27 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-system_description = """Bạn là một dịch giả truyện Kiếm Hiệp Trung Quốc cho tựa game Where Winds Meets (Yến Vân Thập Lục Thanh).
-Sử dụng các từ Hán-Việt thông dụng khi dịch từng câu từ tiếng Trung sang tiếng Việt.
-Đối với tên riêng, chiêu thức, vũ khí, địa danh hoặc thuật ngữ kỹ thuật: BẠN PHẢI chuyển đổi chúng sang âm Hán-Việt tương ứng.
-TUYỆT ĐỐI KHÔNG giữ lại bất kỳ ký tự tiếng Trung nào trong kết quả.
-Nếu không thể dịch nghĩa, hãy phiên âm toàn bộ văn bản sang Hán-Việt.
-Không phản hồi bằng tiếng Trung hoặc dùng ký tự Trung Quốc. Chỉ phản hồi bằng tiếng Việt.
-CHỈ trả về định dạng JSON hợp lệ, không giải thích hoặc dùng dấu ```.
+system_description = """Bạn là một dịch giả chuyên nghiệp cho tựa game Kiếm Hiệp "Where Winds Meets" (Yến Vân Thập Lục Thanh).
+Nhiệm vụ của bạn là dịch văn bản từ tiếng Trung sang tiếng Việt, đảm bảo văn phong tự nhiên, dễ hiểu cho người đọc, phù hợp với bối cảnh cổ trang nhưng không lạm dụng từ Hán-Việt.
+Quy tắc dịch thuật:
+1. **Văn phong**: Dịch nghĩa sang tiếng Việt thuần Việt, tự nhiên, trôi chảy cho các câu thoại, mô tả. Tránh dịch word-by-word (âm Hán-Việt) gây khó hiểu.
+   - Ví dụ: "用强只怕激得病更重" -> Dịch là "Dùng sức mạnh chỉ sợ làm bệnh nặng thêm" (KHÔNG dịch là "Dụng cường chỉ phạ kích đắc bệnh cánh trọng").
+2. **Thuật ngữ & Tên riêng**: Giữ nguyên âm Hán-Việt cho:
+   - Tên người, Tên địa danh.
+   - Tên chiêu thức, võ công, vũ khí.
+   - Các thuật ngữ tu tiên, kiếm hiệp đặc thù.
+3. **Tuyệt đối KHÔNG để lại ký tự tiếng Trung**: Nếu không dịch được nghĩa, hãy phiên âm Hán-Việt, nhưng ưu tiên dịch nghĩa nếu có thể.
+4. **Định dạng**: Chỉ trả về JSON hợp lệ. Không bao gồm markdown hay giải thích thêm.
+
 Ví dụ:
-- Sai: "偷師-狂瀾-弟子1-站崗" -> "偷師-Cuồng Lan-Đệ tử 1-Trạm Cương" (Vẫn chứa ký tự Trung)
-- Đúng: "偷師-狂瀾-弟子1-站崗" -> "Thâu Sư - Cuồng Lan - Đệ Tử 1 - Trạm Cương" (Đã chuyển hoàn toàn sang Hán-Việt)
-- Sai: "Mèo con vô助" -> "Mèo con vô助" (Giữ lại ký tự gốc)
-- Đúng: "Mèo con vô助" -> "Mèo con vô trợ" (Dịch nghĩa hoặc dùng Hán-Việt)
-- Sai: "蛐蛐" -> "蛐蛐"
-- Đúng: "蛐蛐" -> "Khúc Khúc" (Hoặc "Dế mèn" nếu hiểu nghĩa)
+- Gốc: "偷師-狂瀾-弟子1-站崗"
+- Dịch: "Thâu Sư - Cuồng Lan - Đệ Tử 1 - Trạm Cương" (Tên riêng/Thuật ngữ -> Hán Việt)
+
+- Gốc: "entity表-刘铭册"
+- Dịch: "bảng thực thể - Lưu Minh Sách"
+
+- Gốc: "既然他觉得自己是狗，那我也扮成狗试试。"
+- Dịch: "Đã vậy hắn cảm thấy mình là chó, thì ta cũng thử đóng giả làm chó xem sao." (Câu thoại -> Dịch nghĩa tự nhiên)
 """
 
 # Read OS env for api key and base url
@@ -75,6 +82,9 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
                 extra_body={
                     "reasoning": {
                         "effort": "low"
+                    },
+                    "provider": {
+                        "order": ["siliconflow/fp8", "atlas-cloud/fp8", "gmicloud/fp8"]
                     }
                 },
                 model=model,
@@ -85,10 +95,16 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
                     },
                     {"role": "user", "content": json_str},
                 ],
-                stream=False,
+                stream=True
             )
             
-            resp_content = completion.choices[0].message.content
+            resp_content = ""
+            for chunk in completion:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    resp_content += delta
+                    if hasattr(spinner, 'update_text'):
+                        spinner.update_text(resp_content)
             
             # Clean up markdown code blocks if present
             cleaned_content = resp_content.replace("```json", "").replace("```", "").strip()
@@ -172,36 +188,16 @@ def translate_text(spinner, input_file, output_file):
         api_key=auth_api_key,
     )
 
-    # Chunking configuration
-    CHUNK_SIZE = 20 # Number of items per chunk
-    items = list(data.items())
-    total_items = len(items)
-    translated_data = {}
-    
-    # Process chunks
-    for i in range(0, total_items, CHUNK_SIZE):
-        chunk_items = items[i : i + CHUNK_SIZE]
-        chunk_dict = dict(chunk_items)
-        
-        # Update spinner
-        if hasattr(spinner, 'text'):
-            spinner.text = f"Translating chunk {i//CHUNK_SIZE + 1}/{(total_items + CHUNK_SIZE - 1)//CHUNK_SIZE}..."
-        
-        translated_chunk = translate_chunk(client, openai_model, system_description, chunk_dict, spinner)
-        
-        if translated_chunk:
-            translated_data.update(translated_chunk)
-        else:
-            spinner.warn(f"Chunk {i//CHUNK_SIZE + 1} failed. Skipping...")
-            # Optionally keep original or empty? 
-            # Keeping original might be better than losing data, but user wants to avoid Chinese.
-            # Let's keep original but maybe mark it? Or just keep original so we don't break the game.
-            # But the user specifically wants to clear false files.
-            # If we fail, maybe we shouldn't write the file?
-            # Let's write what we have, maybe?
-            # For now, let's just update with original if translation fails, so keys are preserved.
-            translated_data.update(chunk_dict)
+    # Translate the whole file at once
+    if hasattr(spinner, 'text'):
+        spinner.text = f"Translating {os.path.basename(input_file)}..."
 
+    translated_data = translate_chunk(client, openai_model, system_description, data, spinner)
+
+    if not translated_data:
+        spinner.warn(f"Translation failed for {os.path.basename(input_file)}. Keeping original data.")
+        translated_data = data
+    
     processed_at = os.times()
 
     # Write the full translated text to output file
@@ -227,7 +223,7 @@ def process_file(idx, filename, input_file, output_file, total_files):
         def update_text(self, text):
             # Print streaming update on the same line
             # Truncate to avoid messing up terminal
-            preview = text.replace("\n", " ").strip()[-40:]
+            preview = text.replace("\n", " ").strip()[-100:]
             print(f"\r⠙ {filename}: ...{preview}", end="", flush=True)
     
     spinner = DummySpinner()
