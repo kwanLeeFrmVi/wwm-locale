@@ -88,6 +88,20 @@ def download_file(url, dest):
     cmd = ["curl", "-L", url, "-o", dest]
     return run_command(cmd)
 
+def force_move(src, dst_dir):
+    filename = os.path.basename(src)
+    # Ignore junk
+    if filename == "__MACOSX" or filename.startswith("._") or filename == ".DS_Store":
+        return
+
+    dst = os.path.join(dst_dir, filename)
+    if os.path.exists(dst):
+        if os.path.isdir(dst):
+            shutil.rmtree(dst)
+        else:
+            os.remove(dst)
+    shutil.move(src, dst)
+
 def prepare_workspace():
     os.makedirs(WORKS_DIR, exist_ok=True)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -207,13 +221,15 @@ def task_pack():
         
         # Handle potential subfolder in zip
         items = os.listdir(tmp_dir)
-        if len(items) == 1 and os.path.isdir(os.path.join(tmp_dir, items[0])):
-            src = os.path.join(tmp_dir, items[0])
+        real_items = [i for i in items if not (i.startswith("._") or i == "__MACOSX" or i == ".DS_Store")]
+
+        if len(real_items) == 1 and os.path.isdir(os.path.join(tmp_dir, real_items[0])):
+            src = os.path.join(tmp_dir, real_items[0])
             for item in os.listdir(src):
-                shutil.move(os.path.join(src, item), patch_dir)
+                force_move(os.path.join(src, item), patch_dir)
         else:
             for item in items:
-                shutil.move(os.path.join(tmp_dir, item), patch_dir)
+                force_move(os.path.join(tmp_dir, item), patch_dir)
                 
         shutil.rmtree(tmp_dir)
 

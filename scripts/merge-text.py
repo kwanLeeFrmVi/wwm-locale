@@ -9,6 +9,21 @@ import os
 import sys
 
 
+def read_json_file(filepath):
+    """Read JSON with multiple encoding fallbacks."""
+    encodings = ['utf-8', 'gb18030', 'gbk', 'latin-1']
+    for enc in encodings:
+        try:
+            with open(filepath, 'r', encoding=enc) as f:
+                return json.load(f)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+    # Last resort: read as binary and decode with errors='replace'
+    with open(filepath, 'rb') as f:
+        content = f.read().decode('utf-8', errors='replace')
+    return json.loads(content)
+
+
 def merge_text_files(base_dir, patch_dir, save_missing=False):
     merged_data = {}
 
@@ -19,16 +34,7 @@ def merge_text_files(base_dir, patch_dir, save_missing=False):
     for filename in os.listdir(text_dir):
         if filename.endswith(".json"):
             orig_filepath = os.path.join(text_dir, filename)
-            with open(orig_filepath, "r", encoding="utf-8") as f:
-                try:
-                    data = json.load(f)
-                except UnicodeDecodeError:
-                    # Retry with GB18030 for Chinese source files
-                    pass
-            
-            if 'data' not in locals():
-                with open(orig_filepath, "r", encoding="gb18030") as f:
-                    data = json.load(f)
+            data = read_json_file(orig_filepath)
             
             merged_data.update(data)
 
@@ -41,27 +47,21 @@ def merge_text_files(base_dir, patch_dir, save_missing=False):
         if filename.endswith(".json") and not filename.startswith(".") and filename != "missing.json":
             try:
                 patch_filepath = os.path.join(patch_dir, filename)
-                with open(patch_filepath, "r", encoding="utf-8") as f:
-                    try:
-                        patch_data = json.load(f)
-                    except UnicodeDecodeError:
-                         # Retry with GB18030 for copied original files
-                        pass
+                patch_data = read_json_file(patch_filepath)
                 
-                if 'patch_data' not in locals():
-                    with open(patch_filepath, "r", encoding="gb18030") as f:
-                        patch_data = json.load(f)
-                    # check if key exists in merged_data then update, else skip
-                    for key, value in patch_data.items():
-                        patched_keys.add(key)
-                        if key in merged_data:
-                            if isinstance(value, str):
-                                merged_data[key] = value
-                            elif isinstance(value, list) and len(value) > 0:
-                                merged_data[key] = value[-1]
-                            elif isinstance(value, dict) and len(value) > 0:
-                                last_key = list(value.keys())[-1]
-                                merged_data[key] = value[last_key]
+                # check if key exists in merged_data then update, else skip
+                for key, value in patch_data.items():
+                    patched_keys.add(key)
+                    if key in merged_data:
+                        if isinstance(value, str):
+                            merged_data[key] = value
+                        elif isinstance(value, list) and len(value) > 0:
+                            merged_data[key] = value[-1]
+                        elif isinstance(value, dict) and len(value) > 0:
+                            last_key = list(value.keys())[-1]
+                            merged_data[key] = value[last_key]
+                
+                del patch_data  # reset for next iteration
 
             except json.JSONDecodeError as e:
                 print(f"Error decoding JSON from `{filename}`: {e}")
@@ -69,6 +69,22 @@ def merge_text_files(base_dir, patch_dir, save_missing=False):
     # save original output file
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(merged_data, f, ensure_ascii=False, indent=2)
+
+    # sync merged values back into per-file text shards so packer picks them up
+    for filename in os.listdir(text_dir):
+        if filename.endswith(".json"):
+            shard_path = os.path.join(text_dir, filename)
+            shard_data = read_json_file(shard_path)
+
+            updated = False
+            for key in list(shard_data.keys()):
+                if key in merged_data and shard_data[key] != merged_data[key]:
+                    shard_data[key] = merged_data[key]
+                    updated = True
+
+            if updated:
+                with open(shard_path, "w", encoding="utf-8") as f:
+                    json.dump(shard_data, f, ensure_ascii=False, indent=2)
 
     # save missing keys if --miss flag is set
     if save_missing:
