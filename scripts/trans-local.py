@@ -65,7 +65,7 @@ def contains_chinese(text):
     """Check if text contains Chinese characters."""
     return bool(re.search(r'[\u4e00-\u9fff]', text))
 
-def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retries=3):
+def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retries=5):
     """Translate a dictionary chunk with validation."""
     json_str = json.dumps(chunk_data, ensure_ascii=False)
     
@@ -81,12 +81,12 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
                     "X-Title": "WWM Locale Tool",
                 },
                 extra_body={
-                    "reasoning": {
-                        "effort": "low"
-                    },
-                    "provider": {
-                        "order": ["siliconflow/fp8", "atlas-cloud/fp8", "gmicloud/fp8"]
-                    }
+                    # "reasoning": {
+                    #     "effort": "low"
+                    # },
+                    # "provider": {
+                    #     "order": ["siliconflow/fp8", "atlas-cloud/fp8", "gmicloud/fp8"]
+                    # }
                 },
                 model=model,
                 messages=[
@@ -101,6 +101,8 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
             
             resp_content = ""
             for chunk in completion:
+                if not chunk.choices:
+                    continue
                 delta = chunk.choices[0].delta.content
                 if delta:
                     resp_content += delta
@@ -131,6 +133,7 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
             if has_chinese:
                 if attempt < max_retries - 1:
                     spinner.warn(f"Response contains Chinese characters. Retrying ({attempt + 1}/{max_retries})...")
+                    time.sleep(2)
                     continue
                 else:
                     spinner.fail(f"Failed validation (contains Chinese) after {max_retries} attempts.")
@@ -140,8 +143,9 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
 
         except Exception as e:
             if attempt < max_retries - 1:
-                spinner.warn(f"Error: {e}. Retrying in 2s...")
-                time.sleep(2)
+                wait_time = 5 * (attempt + 1)
+                spinner.warn(f"Error: {e}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
             else:
                 spinner.fail(f"Failed after {max_retries} attempts. Error: {e}")
                 return None
