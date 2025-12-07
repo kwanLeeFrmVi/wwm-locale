@@ -27,7 +27,7 @@ LANG = {
         "menu_exit": "0. Exit",
         "prompt_choice": "Choose an option: ",
         "prompt_words_map": "Enter path or URL to words_map file: ",
-        "prompt_patched_zip": "Enter path or URL to patched zip file: ",
+        "prompt_patched_zip": "Enter path or URL to patched zip file or directory: ",
         "prompt_source_dir": "Enter source directory (containing .json files): ",
         "prompt_output_dir": "Enter output directory: ",
         "msg_unpacking": "Unpacking...",
@@ -35,7 +35,7 @@ LANG = {
         "msg_translating": "Translating...",
         "msg_done": "Done!",
         "msg_error": "Error: {}",
-        "msg_file_not_found": "File not found: {}",
+        "msg_file_not_found": "File/Directory not found: {}",
         "msg_invalid_choice": "Invalid choice.",
         "msg_press_enter": "Press Enter to continue...",
     },
@@ -48,7 +48,7 @@ LANG = {
         "menu_exit": "0. Thoát",
         "prompt_choice": "Chọn một tùy chọn: ",
         "prompt_words_map": "Nhập đường dẫn hoặc URL đến file words_map: ",
-        "prompt_patched_zip": "Nhập đường dẫn hoặc URL đến file zip đã sửa: ",
+        "prompt_patched_zip": "Nhập đường dẫn hoặc URL đến file zip hoặc thư mục đã sửa: ",
         "prompt_source_dir": "Nhập thư mục nguồn (chứa các file .json): ",
         "prompt_output_dir": "Nhập thư mục đầu ra: ",
         "msg_unpacking": "Đang giải nén...",
@@ -56,7 +56,7 @@ LANG = {
         "msg_translating": "Đang dịch...",
         "msg_done": "Hoàn tất!",
         "msg_error": "Lỗi: {}",
-        "msg_file_not_found": "Không tìm thấy file: {}",
+        "msg_file_not_found": "Không tìm thấy file/thư mục: {}",
         "msg_invalid_choice": "Lựa chọn không hợp lệ.",
         "msg_press_enter": "Nhấn Enter để tiếp tục...",
     }
@@ -162,53 +162,70 @@ def task_pack():
             return
         shutil.copy(words_map_input, local_words_map)
 
-    # Input patched zip
-    patched_zip_input = input(t("prompt_patched_zip")).strip()
-    local_patched_zip = os.path.join(WORKS_DIR, "patched.zip")
+    # Input patched source
+    patched_input = input(t("prompt_patched_zip")).strip()
+    patched_input = patched_input.strip("'\"")
     
-    if patched_zip_input.startswith("http"):
-        if not download_file(patched_zip_input, local_patched_zip): return
-    else:
-        patched_zip_input = patched_zip_input.strip("'\"")
-        if not os.path.exists(patched_zip_input):
-            print(t("msg_file_not_found").format(patched_zip_input))
-            return
-        shutil.copy(patched_zip_input, local_patched_zip)
-
-    print(t("msg_packing"))
-    ensure_executable(BIN_YANYUN)
-
     # 1. Unpack original words_map to ./output/words_map
-    # Note: yanyun seems to output to ./output/words_map by default based on workflows
     if not run_command([BIN_YANYUN, local_words_map]): return
 
-    # 2. Unzip patched files
+    # 2. Prepare patch directory
     patch_dir = os.path.join(WORKS_DIR, "patch")
-    tmp_dir = os.path.join(WORKS_DIR, "tmp")
     os.makedirs(patch_dir, exist_ok=True)
-    os.makedirs(tmp_dir, exist_ok=True)
-    
-    with zipfile.ZipFile(local_patched_zip, 'r') as zip_ref:
-        zip_ref.extractall(tmp_dir)
-    
-    # Handle potential subfolder in zip
-    items = os.listdir(tmp_dir)
-    if len(items) == 1 and os.path.isdir(os.path.join(tmp_dir, items[0])):
-        src = os.path.join(tmp_dir, items[0])
-        for item in os.listdir(src):
-            shutil.move(os.path.join(src, item), patch_dir)
+
+    if os.path.isdir(patched_input):
+        # Case: Input is a directory
+        print(f"Copying files from {patched_input}...")
+        for item in os.listdir(patched_input):
+            s = os.path.join(patched_input, item)
+            d = os.path.join(patch_dir, item)
+            if os.path.isdir(s):
+                shutil.copytree(s, d, dirs_exist_ok=True)
+            else:
+                shutil.copy2(s, d)
     else:
-        for item in items:
-            shutil.move(os.path.join(tmp_dir, item), patch_dir)
-            
-    shutil.rmtree(tmp_dir)
+        # Case: Input is a zip file or URL
+        local_patched_zip = os.path.join(WORKS_DIR, "patched.zip")
+        
+        if patched_input.startswith("http"):
+            if not download_file(patched_input, local_patched_zip): return
+        else:
+            if not os.path.exists(patched_input):
+                print(t("msg_file_not_found").format(patched_input))
+                return
+            shutil.copy(patched_input, local_patched_zip)
+
+        print(t("msg_packing"))
+        ensure_executable(BIN_YANYUN)
+
+        # Unzip patched files
+        tmp_dir = os.path.join(WORKS_DIR, "tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
+        
+        with zipfile.ZipFile(local_patched_zip, 'r') as zip_ref:
+            zip_ref.extractall(tmp_dir)
+        
+        # Handle potential subfolder in zip
+        items = os.listdir(tmp_dir)
+        if len(items) == 1 and os.path.isdir(os.path.join(tmp_dir, items[0])):
+            src = os.path.join(tmp_dir, items[0])
+            for item in os.listdir(src):
+                shutil.move(os.path.join(src, item), patch_dir)
+        else:
+            for item in items:
+                shutil.move(os.path.join(tmp_dir, item), patch_dir)
+                
+        shutil.rmtree(tmp_dir)
 
     # 3. Merge text
     # python3 ./scripts/merge-text.py ./output/words_map ./works/patch
     output_words_map_dir = os.path.join(OUTPUT_DIR, "words_map")
     if not run_command([sys.executable, SCRIPT_MERGE, output_words_map_dir, patch_dir]): return
 
-    # 4. Pack
+    # 4. Cleanup metadata
+    subprocess.run(["find", output_words_map_dir, "-name", "._*", "-delete"], stderr=subprocess.DEVNULL)
+
+    # 5. Pack
     # ./bin/yanyun ./output/words_map
     if not run_command([BIN_YANYUN, output_words_map_dir]): return
 

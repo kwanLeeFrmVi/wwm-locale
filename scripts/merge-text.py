@@ -20,8 +20,17 @@ def merge_text_files(base_dir, patch_dir, save_missing=False):
         if filename.endswith(".json"):
             orig_filepath = os.path.join(text_dir, filename)
             with open(orig_filepath, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                merged_data.update(data)
+                try:
+                    data = json.load(f)
+                except UnicodeDecodeError:
+                    # Retry with GB18030 for Chinese source files
+                    pass
+            
+            if 'data' not in locals():
+                with open(orig_filepath, "r", encoding="gb18030") as f:
+                    data = json.load(f)
+            
+            merged_data.update(data)
 
     # track all keys from base for missing detection
     base_keys = set(merged_data.keys())
@@ -29,11 +38,19 @@ def merge_text_files(base_dir, patch_dir, save_missing=False):
 
     # apply patches
     for filename in os.listdir(patch_dir):
-        if filename.endswith(".json") and filename != "missing.json":
+        if filename.endswith(".json") and not filename.startswith(".") and filename != "missing.json":
             try:
                 patch_filepath = os.path.join(patch_dir, filename)
                 with open(patch_filepath, "r", encoding="utf-8") as f:
-                    patch_data = json.load(f)
+                    try:
+                        patch_data = json.load(f)
+                    except UnicodeDecodeError:
+                         # Retry with GB18030 for copied original files
+                        pass
+                
+                if 'patch_data' not in locals():
+                    with open(patch_filepath, "r", encoding="gb18030") as f:
+                        patch_data = json.load(f)
                     # check if key exists in merged_data then update, else skip
                     for key, value in patch_data.items():
                         patched_keys.add(key)
