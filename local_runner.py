@@ -127,6 +127,9 @@ def task_unpack():
         if not os.path.exists(words_map_input):
             print(t("msg_file_not_found").format(words_map_input))
             return
+        if os.path.isdir(words_map_input):
+            print(t("msg_error").format(f"Expected a file, but got a directory: {words_map_input}"))
+            return
         shutil.copy(words_map_input, local_words_map)
 
     print(t("msg_unpacking"))
@@ -173,6 +176,9 @@ def task_pack():
         words_map_input = words_map_input.strip("'\"")
         if not os.path.exists(words_map_input):
             print(t("msg_file_not_found").format(words_map_input))
+            return
+        if os.path.isdir(words_map_input):
+            print(t("msg_error").format(f"Expected a file, but got a directory: {words_map_input}"))
             return
         shutil.copy(words_map_input, local_words_map)
 
