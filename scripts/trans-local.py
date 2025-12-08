@@ -128,6 +128,15 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
             # Clean up markdown code blocks if present
             cleaned_content = resp_content.replace("```json", "").replace("```", "").strip()
             
+            # Detect if LLM output explanation instead of JSON
+            if not cleaned_content.startswith("{"):
+                if attempt < max_retries - 1:
+                    spinner.warn(f"Response is not JSON (starts with text). Retrying ({attempt + 1}/{max_retries})...")
+                    continue
+                else:
+                    spinner.fail(f"Failed: LLM returned explanation instead of JSON.")
+                    return None
+            
             try:
                 translated_chunk = json.loads(cleaned_content)
             except json.JSONDecodeError:
