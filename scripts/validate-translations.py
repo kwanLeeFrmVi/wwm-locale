@@ -61,6 +61,27 @@ def translate_missing_keys(missing_data: dict, max_retries: int = 3) -> dict:
     print(f"  ✖ Translation failed, keeping original text")
     return missing_data
 
+def build_translation_index(dich_xong_dir: str):
+    """Build a global key->translation map from all translated files."""
+    index = {}
+    collisions = {}
+    files = [f for f in os.listdir(dich_xong_dir) if f.endswith(".json") and not f.startswith("._")]
+    for f in files:
+        path = os.path.join(dich_xong_dir, f)
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                continue
+        except Exception:
+            continue
+        for k, v in data.items():
+            if k not in index:
+                index[k] = v
+            elif index[k] != v:
+                collisions.setdefault(k, set()).update([index[k], v])
+    return index, collisions
+
 def find_translated_file(entry_id: str, dich_xong_dir: str) -> str | None:
     """Find translated file for given entry ID."""
     for f in os.listdir(dich_xong_dir):
@@ -68,13 +89,34 @@ def find_translated_file(entry_id: str, dich_xong_dir: str) -> str | None:
             return os.path.join(dich_xong_dir, f)
     return None
 
-def validate_and_update(entry_file: str, translated_file: str, dry_run: bool = False) -> dict:
+def safe_load_json(path: str):
+    """Load JSON with a fallback for bad encodings."""
+    # First try utf-8
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            if not content:
+                return {}
+            return json.loads(content)
+    except UnicodeDecodeError:
+        # Fallback: latin-1 then ignore errors if still fails
+        try:
+            with open(path, "r", encoding="latin-1") as f:
+                content = f.read().strip()
+                if not content:
+                    return {}
+                return json.loads(content)
+        except UnicodeDecodeError:
+            with open(path, "r", encoding="latin-1", errors="ignore") as f:
+                content = f.read().strip()
+                if not content:
+                    return {}
+                return json.loads(content)
+
+def validate_and_update(entry_file: str, translated_file: str, index: dict, collisions: dict, dry_run: bool = False) -> dict:
     """Validate translated file has all keys from entry. Return stats."""
-    with open(entry_file, "r", encoding="utf-8") as f:
-        entry_data = json.load(f)
-    
-    with open(translated_file, "r", encoding="utf-8") as f:
-        trans_data = json.load(f)
+    entry_data = safe_load_json(entry_file)
+    trans_data = safe_load_json(translated_file)
     
     entry_keys = set(entry_data.keys())
     trans_keys = set(trans_data.keys())
@@ -91,20 +133,31 @@ def validate_and_update(entry_file: str, translated_file: str, dry_run: bool = F
     }
     
     if missing:
-        # Build dict of missing keys to translate
-        missing_data = {k: entry_data[k] for k in missing}
-        
+        resolved = {}
+        to_translate = {}
+
+        # Use global index first
+        for key in missing:
+            if key in index:
+                resolved[key] = index[key]
+            else:
+                to_translate[key] = entry_data[key]
+
         if not dry_run:
-            print(f"  → Translating {len(missing)} missing keys...")
-            translated_missing = translate_missing_keys(missing_data)
-            
-            # Add translated keys to trans_data
-            for key in missing:
-                trans_data[key] = translated_missing.get(key, entry_data[key])
-            
-            with open(translated_file, "w", encoding="utf-8") as f:
-                json.dump(trans_data, f, ensure_ascii=False, indent=2)
-            stats["updated"] = True
+            if resolved:
+                print(f"  → Filled {len(resolved)} missing keys from other files")
+                trans_data.update(resolved)
+
+            if to_translate:
+                print(f"  → Translating {len(to_translate)} missing keys...")
+                translated_missing = translate_missing_keys(to_translate)
+                for key in to_translate:
+                    trans_data[key] = translated_missing.get(key, entry_data[key])
+
+            if resolved or to_translate:
+                with open(translated_file, "w", encoding="utf-8") as f:
+                    json.dump(trans_data, f, ensure_ascii=False, indent=2)
+                stats["updated"] = True
     
     return stats, missing, extra
 
@@ -134,6 +187,11 @@ def main():
     updated = 0
     not_found = 0
     
+    # Build global translation index once
+    index, collisions = build_translation_index(dich_xong_dir)
+    if collisions:
+        print(f"⚠ Collisions on {len(collisions)} keys (different translations). Using first seen.")
+    
     print(f"Validating {total} entry files...")
     if dry_run:
         print("(DRY RUN - no files will be modified)")
@@ -154,7 +212,7 @@ def main():
             not_found += 1
             continue
         
-        stats, missing, extra = validate_and_update(entry_path, trans_path, dry_run)
+        stats, missing, extra = validate_and_update(entry_path, trans_path, index, collisions, dry_run)
         
         if stats["missing"] > 0 or stats["extra"] > 0:
             issues += 1
