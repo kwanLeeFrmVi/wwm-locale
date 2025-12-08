@@ -22,6 +22,8 @@ Quy tắc dịch thuật:
    - Output phải là Raw JSON object.
    - Không dùng ```json```.
    - Không thêm text thừa.
+   - GIỮ NGUYÊN SỐ LƯỢNG KEY: Output JSON phải có ĐÚNG số key như input, không được bỏ sót hay thêm key.
+
 
 4. **Định dạng Vật phẩm**:
    - Nếu gặp định dạng "Tên vật phẩm * Số lượng" (Ví dụ: "XXX*3000"), hãy đổi thành "Số lượng Tên vật phẩm" (Ví dụ: "3000 XXX").
@@ -30,7 +32,7 @@ Ví dụ:
 Input:
 {
   "1": "偷師-狂瀾-弟子1-站崗",
-  "2": "entity表-刘铭册",
+  "2": "entity表",   
   "3": "既然他觉得自己是狗，那我也扮成狗试试。",
   "4": "至于这沧浪剑谱，其中所载剑法实在凌厉，与我眼下所求已大不相同，留在我身边也是无用。",
   "5": "随战令成长获得丰厚奖励",
@@ -45,7 +47,7 @@ Input:
 Output (Chỉ trả về JSON):
 {
   "1": "Thâu Sư - Cuồng Lan - Đệ Tử 1 - Trạm Cương",
-  "2": "bảng thực thể - Lưu Minh Sách",
+  "2": "bảng thực thể",
   "3": "Đã vậy hắn cảm thấy mình là chó, thì ta cũng thử đóng giả làm chó xem sao.",
   "4": "Về đến cuốn Kinh Thập Lục Thanh, các chiêu kiếm ghi chép tuy sắc bén hung hiểm, nhưng khác hẳn thứ ta cần; giữ bên mình cũng vô ích.",
   "5": "Nhận phần thưởng hậu hĩnh khi bạn vượt qua trận chiến",

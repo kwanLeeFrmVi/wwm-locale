@@ -65,6 +65,22 @@ def contains_chinese(text):
     """Check if text contains Chinese characters."""
     return bool(re.search(r'[\u4e00-\u9fff]', text))
 
+def is_technical_string(text):
+    """Check if string is technical/system data that shouldn't be translated."""
+    if not isinstance(text, str):
+        return False
+    # Database table patterns
+    if re.search(r'[\u4e00-\u9fff]*表[》\]]', text):  # ends with 表》 or 表]
+        return True
+    # Contains code-like patterns with underscores and equals
+    if re.search(r'\w+_\w+.*=', text):
+        return True
+    # Mostly special characters/code
+    special_chars = sum(1 for c in text if c in '_=<>[]{}()《》')
+    if len(text) > 0 and special_chars / len(text) > 0.15:
+        return True
+    return False
+
 def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retries=5):
     """Translate a dictionary chunk with validation."""
     json_str = json.dumps(chunk_data, ensure_ascii=False)
@@ -122,12 +138,21 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
                     spinner.fail(f"Failed to parse JSON after {max_retries} attempts.")
                     return None
 
-            # Validate for Chinese characters
+            # Validate key count matches input
+            if len(translated_chunk) != len(chunk_data):
+                if attempt < max_retries - 1:
+                    spinner.warn(f"Key count mismatch ({len(translated_chunk)}/{len(chunk_data)}). Retrying ({attempt + 1}/{max_retries})...")
+                    continue
+                else:
+                    spinner.fail(f"Failed: output has {len(translated_chunk)} keys, expected {len(chunk_data)}.")
+                    return None
+
+            # Validate for Chinese characters (skip technical strings)
             has_chinese = False
             for k, v in translated_chunk.items():
-                if isinstance(v, str) and contains_chinese(v):
+                if isinstance(v, str) and contains_chinese(v) and not is_technical_string(v):
                     has_chinese = True
-                    spinner.warn(f"Validation failed at key '{k}': '{v}'")
+                    spinner.warn(f"Validation failed at key '{k}': '{v[:80]}...'")
                     break
             
             if has_chinese:

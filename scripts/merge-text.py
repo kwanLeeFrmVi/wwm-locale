@@ -32,7 +32,7 @@ def merge_text_files(base_dir, patch_dir, save_missing=False):
 
     # merge original data first
     for filename in os.listdir(text_dir):
-        if filename.endswith(".json"):
+        if filename.endswith(".json") and not filename.startswith("."):
             orig_filepath = os.path.join(text_dir, filename)
             data = read_json_file(orig_filepath)
             
@@ -72,7 +72,7 @@ def merge_text_files(base_dir, patch_dir, save_missing=False):
 
     # sync merged values back into per-file text shards so packer picks them up
     for filename in os.listdir(text_dir):
-        if filename.endswith(".json"):
+        if filename.endswith(".json") and not filename.startswith("."):
             shard_path = os.path.join(text_dir, filename)
             shard_data = read_json_file(shard_path)
 
