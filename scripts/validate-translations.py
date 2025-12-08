@@ -23,7 +23,7 @@ def get_system_prompt():
             return f.read().strip()
     return "Translate Chinese to Vietnamese. Return JSON only."
 
-def translate_missing_keys(missing_data: dict, max_retries: int = 3) -> dict:
+def translate_missing_keys(missing_data: dict, max_retries: int = 12) -> dict:
     """Translate missing keys using LLM."""
     if not missing_data:
         return {}
