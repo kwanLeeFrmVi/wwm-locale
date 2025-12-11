@@ -24,9 +24,9 @@ def main():
         f.unlink()
 
     ts = int(time.time())
-    pattern = re.compile(r"entry_(\d+)\.json$")
+    pattern = re.compile(r"(\d+)\.json$")
 
-    for f in sorted(src.glob("entry_*.json")):
+    for f in sorted(src.glob("*.json")):
         m = pattern.search(f.name)
         if not m:
             continue
