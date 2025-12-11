@@ -259,5 +259,7 @@
   "12457356755126276171": "Khí huyết",
   "10184975324225839811": "Đang phát ở tốc độ nhanh",
   "4850829214277685471": "Khách C",
-  "199595346373026124": "Khu độc hóa ứ"
+  "199595346373026124": "Khu độc hóa ứ",
+  "17015196395957475688": "Thao tác không khả dụng trong thời gian bảo trì. Bảo trì sẽ kết thúc sau %s phút, xin vui lòng chờ!",
+  "1972855324271118275": "Sắp thay thế {} bằng {}, xác nhận thay thế?"
 }

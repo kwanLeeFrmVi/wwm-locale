@@ -264,5 +264,8 @@
   "12611492276523249718": "Phải tìm cách mở cơ quan mới được, lỡ bị nhốt chết ở đây thì phiền to rồi!",
   "12862365457974824945": "[[Giới thiệu controller: Bộ điều khiển nhập số đa nền tảng.\nTham số controller: min_value: Giá trị tối thiểu (mặc định: 0)\n\t\t\t\tmax_value: Giá trị tối đa\n\t\t\t\tinit_value: Giá trị khởi đầu được chọn\n\t\t\t\tstep: Bước nhảy\n\t\t\t\tcallback: Hàm gọi lại khi chọn số\n\t\t\t\treach_limit_callback: Hàm gọi lại khi số vượt giới hạn\n\t\t\t\tformat_str: Chuỗi định dạng hiển thị (mặc định: \"{cur_value:d}\")\n\t\t\t\t]]",
   "8135323660279801512": "Đi theo Nguyên Bảo, tìm Doanh Doanh",
-  "6374004229366276973": "Đang tải..."
+  "6374004229366276973": "Đang tải...",
+  "1615099780523562636": "Hàng mới trong cửa hàng",
+  "10885616602903396795": "Áo lụa phất phơ, váy nhẹ cuốn theo chiều gió.\nPhiếu này mở khóa dùng thử 3 ngày cho trang phục [Lệ Hoa].",
+  "11914312980103105196": "Khoác lên tấm bào này, có thể dạo bước giữa mây ngàn hay lặn sâu biển cả."
 }
