@@ -273,9 +273,9 @@ def process_file(idx, filename, input_file, output_file, total_files):
     # 4. If no missing keys, we are done
     if not missing_data:
         # Save file to ensure it exists with all content
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(final_data, f, ensure_ascii=False, indent=2)
-        print(f"✔ [{idx + 1}/{total_files}] {filename} (All keys exist)")
+        # with open(output_file, "w", encoding="utf-8") as f:
+        #     json.dump(final_data, f, ensure_ascii=False, indent=2)
+        print(f"✔ [{idx + 1}/{total_files}] {filename} (Skipped - All keys already exist)")
         return
 
     # 5. Translate missing keys
