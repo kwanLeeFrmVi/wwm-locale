@@ -16,6 +16,9 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Global translation memory
+GLOBAL_TRANSLATION_MAP = {}
+
 def get_system_prompt():
     """Read system prompt from local file or return default."""
     prompt_path = os.path.join(os.path.dirname(__file__), "system_prompt.txt")
@@ -81,6 +84,34 @@ def is_technical_string(text):
         return True
     return False
 
+def load_global_translations(folder, spinner=None):
+    """Load all existing translations from output folder into global map."""
+    global GLOBAL_TRANSLATION_MAP
+    if not os.path.exists(folder): return
+    
+    files = sorted([f for f in os.listdir(folder) if f.endswith(".json") and not f.startswith("._")])
+    if not files: return
+
+    if spinner: 
+        spinner.start(f"Loading existing translations from {len(files)} files (deduplication)...")
+    
+    for f in files:
+        try:
+            path = os.path.join(folder, f)
+            with open(path, 'r', encoding='utf-8') as fh:
+                data = json.load(fh)
+                if isinstance(data, dict):
+                    # Update global map. Last file wins if duplicates exist.
+                    # Filter out empty or whitespace-only keys
+                    valid_data = {k: v for k, v in data.items() if v and isinstance(v, str) and v.strip()}
+                    GLOBAL_TRANSLATION_MAP.update(valid_data)
+        except Exception:
+            pass
+    
+    if spinner: 
+        spinner.succeed(f"Loaded {len(GLOBAL_TRANSLATION_MAP)} unique keys from {len(files)} files.")
+
+
 def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retries=5):
     """Translate a dictionary chunk with validation."""
     json_str = json.dumps(chunk_data, ensure_ascii=False)
@@ -88,21 +119,12 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
     for attempt in range(max_retries):
         try:
             # Create chat completion
-            # We use stream=False for chunks to easier validate the whole JSON object
-            # But we can simulate streaming if needed, or just wait.
-            # Given the requirement for validation, getting the whole response is safer.
-            
             completion = client.chat.completions.create(
                 extra_headers={
                     "X-Title": "WWM Locale Tool",
                 },
                 extra_body={
-                    # "reasoning": {
-                    #     "effort": "low"
-                    # },
-                    # "provider": {
-                    #     "order": ["siliconflow/fp8", "atlas-cloud/fp8", "gmicloud/fp8"]
-                    # }
+                    # "reasoning": { "effort": "low" },
                 },
                 model=model,
                 messages=[
@@ -170,11 +192,11 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
                     time.sleep(2)
                     continue
                 else:
+                    # Allow partial failure? For now strict.
                     spinner.fail(f"Failed validation (contains Chinese) after {max_retries} attempts.")
                     return None
             
             return translated_chunk
-
         except Exception as e:
             if attempt < max_retries - 1:
                 wait_time = 5 * (attempt + 1)
@@ -184,70 +206,6 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
                 spinner.fail(f"Failed after {max_retries} attempts. Error: {e}")
                 return None
     return None
-
-def translate_text(spinner, input_file, output_file):
-    # current started time
-    started_at = os.times()
-
-    # Path to output file
-    output_file = output_file or os.path.join(
-        os.path.dirname(input_file), "translated_" + os.path.basename(input_file)
-    )
-
-    # Check if input file exists
-    if not os.path.exists(input_file):
-        spinner.fail(f"Input file {input_file} does not exist.")
-        return -1
-
-    # Read content from input file
-    try:
-        with open(input_file, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            if not content:
-                spinner.warn(f"Input file {input_file} is empty.")
-                return 0
-            
-            # Parse JSON
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError:
-                spinner.fail(f"Input file {input_file} is not valid JSON.")
-                return -1
-                
-    except Exception as e:
-        spinner.fail(f"Error reading file: {e}")
-        return -1
-
-    # Ensure output directory exists
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-
-    # Initialize OpenAI client
-    client = OpenAI(
-        base_url=openai_base_url,
-        api_key=auth_api_key,
-    )
-
-    # Translate the whole file at once
-    if hasattr(spinner, 'text'):
-        spinner.text = f"Translating {os.path.basename(input_file)}..."
-
-    
-    # Get the latest system prompt
-    current_system_prompt = get_system_prompt()
-    translated_data = translate_chunk(client, openai_model, current_system_prompt, data, spinner)
-
-    if not translated_data:
-        spinner.warn(f"Translation failed for {os.path.basename(input_file)}. Keeping original data.")
-        translated_data = data
-    
-    processed_at = os.times()
-
-    # Write the full translated text to output file
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(translated_data, f, ensure_ascii=False, indent=2)
-
-    return processed_at[4] - started_at[4]
-
 
 class DummySpinner:
     """Thread-safe spinner replacement for parallel execution."""
@@ -264,41 +222,96 @@ class DummySpinner:
 
 
 def process_file(idx, filename, input_file, output_file, total_files):
-    # Create a new spinner for each thread (or just print since spinner isn't thread-safe)
-    print(f"[{idx + 1}/{total_files}] Translating {filename}...")
+    # check keys using global map + local file check
+    # We want to minimize API calls
     
     spinner = DummySpinner(filename)
-    processed_time = translate_text(spinner, input_file, output_file)
     
-    if processed_time != -1:
-        # Read the first few characters of the translated file for preview
+    # 1. Read source
+    try:
+        with open(input_file, "r", encoding="utf-8") as f:
+            source_data = json.load(f)
+    except Exception as e:
+        print(f"✖ Error reading {filename}: {e}")
+        return
+
+    if not source_data:
+        # Empty source, just touch output if not exists
+        if not os.path.exists(output_file):
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump({}, f)
+        return
+
+    # 2. Prepare final data
+    final_data = {}
+    
+    # Load existing output if present (Resume)
+    if os.path.exists(output_file):
         try:
             with open(output_file, "r", encoding="utf-8") as f:
-                content = f.read()
-                # Try to parse JSON to get values
-                import json
-                try:
-                    data = json.loads(content)
-                    # Assuming the structure is key-value, get the first value or the whole dict
-                    if isinstance(data, dict):
-                        # Get the first string value found
-                        values = [str(v) for v in data.values() if isinstance(v, str)]
-                        if values:
-                            preview = values[0]
-                        else:
-                            preview = str(data)
-                    else:
-                        preview = str(data)
-                except:
-                    preview = content.replace("\n", " ").strip()
-                
-                preview = preview[:60] + "..." if len(preview) > 60 else preview
+                existing = json.load(f)
+                if isinstance(existing, dict):
+                    final_data.update(existing)
         except:
-            preview = "..."
+            pass
+
+    # 3. Identify missing keys
+    missing_data = {}
+    
+    for k, v in source_data.items():
+        if k in final_data:
+            continue # Already translated in this file
             
-        print(f"✔ [{idx + 1}/{total_files}] {filename} -> {preview} ({processed_time:.2f}s)")
+        # Check global map
+        if k in GLOBAL_TRANSLATION_MAP:
+            # Reuse translation from another file
+            final_data[k] = GLOBAL_TRANSLATION_MAP[k]
+        else:
+            # truly missing
+            missing_data[k] = v
+            
+    # 4. If no missing keys, we are done
+    if not missing_data:
+        # Save file to ensure it exists with all content
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(final_data, f, ensure_ascii=False, indent=2)
+        print(f"✔ [{idx + 1}/{total_files}] {filename} (All keys exist)")
+        return
+
+    # 5. Translate missing keys
+    print(f"[{idx + 1}/{total_files}] Translating {filename} ({len(missing_data)} new keys)...")
+    
+    # Initialize OpenAI client
+    client = OpenAI(
+        base_url=openai_base_url,
+        api_key=auth_api_key,
+    )
+    
+    current_system_prompt = get_system_prompt()
+    started_at = time.time()
+    
+    translated_chunk = translate_chunk(client, openai_model, current_system_prompt, missing_data, spinner)
+    
+    if translated_chunk:
+        final_data.update(translated_chunk)
+        # Verify length
+        # (Optional)
     else:
-        print(f"⚠ [{idx + 1}/{total_files}] Translation failed for {filename}.")
+        print(f"⚠ [{idx + 1}/{total_files}] Translation failed for {filename}. partial save.")
+        # We can trigger failure or just save whatever we have (original values for missing?)
+        # For now, let's keep missing as original or just don't update?
+        # User prompt implies "Translate text". If fail, maybe keep original?
+        # Let's keep original for failed keys to avoid data loss in output
+        for k, v in missing_data.items():
+            if k not in final_data:
+                final_data[k] = v
+
+    # Write output
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(final_data, f, ensure_ascii=False, indent=2)
+
+    duration = time.time() - started_at
+    print(f"✔ [{idx + 1}/{total_files}] {filename} finished in {duration:.2f}s")
 
 
 if __name__ == "__main__":
@@ -311,8 +324,7 @@ if __name__ == "__main__":
 
     # Collect the streamed response
     spinner = Halo(text="Processing", spinner="dots")
-    spinner.start()
-
+    
     if not os.path.exists(missing_folder):
         spinner.fail(f"Source folder '{missing_folder}' does not exist.")
         sys.exit(1)
@@ -327,6 +339,10 @@ if __name__ == "__main__":
         spinner.warn(f"No JSON files found in '{missing_folder}'.")
         sys.exit(0)
 
+    # Load global translations FIRST
+    load_global_translations(output_folder, spinner)
+    spinner.start()
+
     now = datetime.now()
     run_at = (
         f"{now.strftime('%y')}"  # Year in 2 digits
@@ -336,14 +352,11 @@ if __name__ == "__main__":
         f"{now.strftime('%M')}"  # Minute
     )
 
-
-
     # Process files in parallel
-    # Process files in parallel
-    # Default to CPU count, fallback to 1 if undetermined
     default_workers = os.cpu_count() or 1
     worker_count = int(os.getenv("WORKER_COUNT", str(default_workers)))
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
+    
     try:
         futures = []
         for idx, filename in enumerate(json_files):
@@ -354,111 +367,6 @@ if __name__ == "__main__":
                 output_file = os.path.join(output_folder, f"t{run_at}_{filename}")
             else:
                 output_file = os.path.join(output_folder, new_filename)
-
-            # Check if output file already exists (Resume capability)
-            # Enhanced: Check if ALL keys from source file exist in translated files
-            
-            # Extract ID from filename (e.g., entry_00123.json -> 00123)
-            match = re.match(r"^.+?_(\d+)\.json$", filename)
-            if match:
-                file_id = match.group(1)
-                # Look for any file ending with _{file_id}.json in output_folder
-                if not os.path.exists(output_folder):
-                    os.makedirs(output_folder, exist_ok=True)
-                existing_files = [f for f in os.listdir(output_folder) if f.endswith(f"_{file_id}.json") and not f.startswith("._")]
-                
-                if existing_files:
-                    # Load source file to get all keys
-                    try:
-                        with open(input_file, "r", encoding="utf-8") as f:
-                            source_data = json.load(f)
-                            source_keys = set(source_data.keys())
-                        
-                        # Check if all keys exist in any of the existing translated files
-                        all_keys_found = False
-                        target_file = None
-                        translated_data = None
-                        translated_keys = set()
-                        
-                        for existing_file in existing_files:
-                            try:
-                                existing_path = os.path.join(output_folder, existing_file)
-                                with open(existing_path, "r", encoding="utf-8") as f:
-                                    translated_data = json.load(f)
-                                    translated_keys = set(translated_data.keys())
-                                    
-                                    if source_keys.issubset(translated_keys):
-                                        all_keys_found = True
-                                        spinner.info(f"[{idx + 1}/{len(json_files)}] Skipping {filename} (all {len(source_keys)} keys exist in {existing_file})")
-                                        break
-                                    else:
-                                        # Found partial translation - we'll use this file
-                                        target_file = existing_path
-                                        break
-                            except:
-                                continue
-                        
-                        if all_keys_found:
-                            continue
-                        
-                        # If we have a partial translation, translate only missing keys
-                        if target_file and translated_data is not None:
-                            missing_keys = source_keys - translated_keys
-                            if missing_keys:
-                                spinner.warn(f"[{idx + 1}/{len(json_files)}] Found {len(missing_keys)} missing keys in {os.path.basename(target_file)}, translating only those...")
-                                
-                                # Create a subset with only missing keys
-                                missing_data = {k: source_data[k] for k in missing_keys}
-                                
-                                # Translate missing keys inline
-                                client = OpenAI(base_url=openai_base_url, api_key=auth_api_key)
-                                current_system_prompt = get_system_prompt()
-                                mini_spinner = DummySpinner(filename)
-                                
-                                translated_missing = translate_chunk(client, openai_model, current_system_prompt, missing_data, mini_spinner)
-                                
-                                if translated_missing:
-                                    # Merge with existing translation
-                                    translated_data.update(translated_missing)
-                                    
-                                    # Write back to the same file
-                                    with open(target_file, "w", encoding="utf-8") as f:
-                                        json.dump(translated_data, f, ensure_ascii=False, indent=2)
-                                    
-                                    spinner.succeed(f"[{idx + 1}/{len(json_files)}] Added {len(translated_missing)} keys to {os.path.basename(target_file)}")
-                                else:
-                                    spinner.warn(f"[{idx + 1}/{len(json_files)}] Failed to translate missing keys for {filename}")
-                                
-                                continue
-                    except Exception as e:
-                        spinner.warn(f"[{idx + 1}/{len(json_files)}] Error checking keys for {filename}: {e}")
-            
-            # Fallback check for exact filename match if pattern doesn't match
-            else:
-                existing_files = [f for f in os.listdir(output_folder) if f.endswith(f"_{filename}") and not f.startswith("._")]
-                if existing_files:
-                    # Same key-based check for non-numbered files
-                    try:
-                        with open(input_file, "r", encoding="utf-8") as f:
-                            source_data = json.load(f)
-                            source_keys = set(source_data.keys())
-                        
-                        all_keys_found = False
-                        for existing_file in existing_files:
-                            try:
-                                with open(os.path.join(output_folder, existing_file), "r", encoding="utf-8") as f:
-                                    translated_data = json.load(f)
-                                    if source_keys.issubset(set(translated_data.keys())):
-                                        all_keys_found = True
-                                        spinner.info(f"[{idx + 1}/{len(json_files)}] Skipping {filename} (all keys exist in {existing_file})")
-                                        break
-                            except:
-                                continue
-                        
-                        if all_keys_found:
-                            continue
-                    except:
-                        pass
 
             futures.append(executor.submit(process_file, idx, filename, input_file, output_file, len(json_files)))
 
@@ -473,5 +381,3 @@ if __name__ == "__main__":
         spinner.fail("User interrupted.")
         executor.shutdown(wait=False)
         os._exit(1)
-
-
