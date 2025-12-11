@@ -152,6 +152,10 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
             
             # Detect if LLM output explanation instead of JSON
             if not cleaned_content.startswith("{"):
+                # Check for 502/HTML in response content as well
+                if "<html>" in cleaned_content or "502 Bad Gateway" in cleaned_content:
+                     raise Exception("Server returned 502 Bad Gateway (HTML Response)")
+
                 if attempt < max_retries - 1:
                     spinner.warn(f"Response is not JSON (starts with text). Retrying ({attempt + 1}/{max_retries})...")
                     continue
@@ -198,12 +202,20 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
             
             return translated_chunk
         except Exception as e:
+            error_msg = str(e)
+            # Detect 502 Bad Gateway HTML being parsed as error or in message
+            if "502 Bad Gateway" in error_msg or "<html>" in error_msg:
+                 error_msg = "502 Bad Gateway (Server Overloaded)"
+                 # Increase wait time for server issues
+                 wait_time = 10 * (attempt + 1)
+            else:
+                 wait_time = 5 * (attempt + 1)
+
             if attempt < max_retries - 1:
-                wait_time = 5 * (attempt + 1)
-                spinner.warn(f"Error: {e}. Retrying in {wait_time}s...")
+                spinner.warn(f"Error: {error_msg}. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
-                spinner.fail(f"Failed after {max_retries} attempts. Error: {e}")
+                spinner.fail(f"Failed after {max_retries} attempts. Error: {error_msg}")
                 return None
     return None
 
@@ -236,50 +248,30 @@ def process_file(idx, filename, input_file, output_file, total_files):
         return
 
     if not source_data:
-        # Empty source, just touch output if not exists
-        if not os.path.exists(output_file):
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump({}, f)
+        print(f"✔ [{idx + 1}/{total_files}] {filename} (Empty source)")
         return
 
-    # 2. Prepare final data
-    final_data = {}
-    
-    # Load existing output if present (Resume)
-    if os.path.exists(output_file):
-        try:
-            with open(output_file, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-                if isinstance(existing, dict):
-                    final_data.update(existing)
-        except:
-            pass
-
-    # 3. Identify missing keys
+    # 2. Identify missing keys
     missing_data = {}
+    reused_count = 0
     
     for k, v in source_data.items():
-        if k in final_data:
-            continue # Already translated in this file
-            
         # Check global map
         if k in GLOBAL_TRANSLATION_MAP:
-            # Reuse translation from another file
-            final_data[k] = GLOBAL_TRANSLATION_MAP[k]
+            reused_count += 1
         else:
             # truly missing
             missing_data[k] = v
             
-    # 4. If no missing keys, we are done
+    # 3. If no missing keys, we are done
     if not missing_data:
-        # Save file to ensure it exists with all content
-        # with open(output_file, "w", encoding="utf-8") as f:
-        #     json.dump(final_data, f, ensure_ascii=False, indent=2)
-        print(f"✔ [{idx + 1}/{total_files}] {filename} (Skipped - All keys already exist)")
+        print(f"✔ [{idx + 1}/{total_files}] {filename} (Skipped - All {reused_count} keys already exist)")
         return
 
-    # 5. Translate missing keys
-    print(f"[{idx + 1}/{total_files}] Translating {filename} ({len(missing_data)} new keys)...")
+    # 4. Translate missing keys
+    missing_count = len(missing_data)
+    missing_preview = list(missing_data.keys())[:3]
+    print(f"[{idx + 1}/{total_files}] {filename}: Reusing {reused_count} keys, Translating {missing_count} NEW keys ({missing_preview})...")
     
     # Initialize OpenAI client
     client = OpenAI(
@@ -292,23 +284,20 @@ def process_file(idx, filename, input_file, output_file, total_files):
     
     translated_chunk = translate_chunk(client, openai_model, current_system_prompt, missing_data, spinner)
     
+    # 5. Write ONLY the translated keys (Delta update)
+    data_to_save = {}
     if translated_chunk:
-        final_data.update(translated_chunk)
-        # Verify length
-        # (Optional)
+        data_to_save = translated_chunk
     else:
         print(f"⚠ [{idx + 1}/{total_files}] Translation failed for {filename}. partial save.")
-        # We can trigger failure or just save whatever we have (original values for missing?)
-        # For now, let's keep missing as original or just don't update?
-        # User prompt implies "Translate text". If fail, maybe keep original?
-        # Let's keep original for failed keys to avoid data loss in output
-        for k, v in missing_data.items():
-            if k not in final_data:
-                final_data[k] = v
+        # If fail, save original missing strings so they are at least in the file?
+        # Or just save nothing?
+        # Let's save the original missing data as fallback
+        data_to_save = missing_data
 
     # Write output
     with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(final_data, f, ensure_ascii=False, indent=2)
+        json.dump(data_to_save, f, ensure_ascii=False, indent=2)
 
     duration = time.time() - started_at
     print(f"✔ [{idx + 1}/{total_files}] {filename} finished in {duration:.2f}s")
