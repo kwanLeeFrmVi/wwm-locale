@@ -13,17 +13,18 @@ load_dotenv()
 BIN_YANYUN = "./bin/yanyun"
 SCRIPT_MERGE = "./scripts/merge-text.py"
 SCRIPT_TRANS = "./scripts/trans-local.py"
-WORKS_DIR = "./works"
-OUTPUT_DIR = "./output"
+WORKS_DIR = os.path.abspath("./works")
+OUTPUT_DIR = os.path.abspath("./output")
 
 # Language Resources
 LANG = {
     "en": {
         "menu_title": "=== WWM Locale Tool ===",
-        "menu_unpack": "1. Unpack words_map",
-        "menu_pack": "2. Pack words_map",
-        "menu_translate": "3. Translate text",
-        "menu_lang": "4. Đổi ngôn ngữ (Tiếng Việt)",
+        "menu_unpack": "1. Unpack words_map (Base + Diff)",
+        "menu_unpack_single": "2. Unpack single file",
+        "menu_pack": "3. Pack words_map",
+        "menu_translate": "4. Translate text",
+        "menu_lang": "5. Đổi ngôn ngữ (Tiếng Việt)",
         "menu_exit": "0. Exit",
         "prompt_choice": "Choose an option: ",
         "prompt_words_map": "Enter path or URL to words_map file: ",
@@ -41,10 +42,11 @@ LANG = {
     },
     "vi": {
         "menu_title": "=== Công cụ Việt hóa WWM ===",
-        "menu_unpack": "1. Giải nén words_map",
-        "menu_pack": "2. Đóng gói words_map",
-        "menu_translate": "3. Dịch văn bản",
-        "menu_lang": "4. Switch Language (English)",
+        "menu_unpack": "1. Giải nén words_map (Base + Diff)",
+        "menu_unpack_single": "2. Giải nén file đơn",
+        "menu_pack": "3. Đóng gói words_map",
+        "menu_translate": "4. Dịch văn bản",
+        "menu_lang": "5. Switch Language (English)",
         "menu_exit": "0. Thoát",
         "prompt_choice": "Chọn một tùy chọn: ",
         "prompt_words_map": "Nhập đường dẫn hoặc URL đến file words_map: ",
@@ -77,7 +79,7 @@ def ensure_executable(path):
 
 def run_command(command, shell=False):
     try:
-        subprocess.run(command, shell=shell, check=True)
+        subprocess.run(command, shell=shell, check=True, stdin=subprocess.DEVNULL)
     except subprocess.CalledProcessError as e:
         print(t("msg_error").format(e))
         return False
@@ -111,163 +113,248 @@ def clean_workspace():
         shutil.rmtree(WORKS_DIR, ignore_errors=True)
     prepare_workspace()
 
+def task_unpack_single():
+    """Unpack a single words_map file directly to output/"""
+    file_input = input(f"{t('prompt_words_map')}: ").strip().strip("'\"")
+    if not file_input: return
+    
+    if file_input.startswith("http"):
+        local_path = os.path.join(WORKS_DIR, "temp_map")
+        if not download_file(file_input, local_path): return
+        file_input = local_path
+    
+    if not os.path.exists(file_input):
+        print(t("msg_file_not_found").format(file_input))
+        return
+    
+    print(f"Unpacking: {file_input}")
+    ensure_executable(BIN_YANYUN)
+    if not run_command([BIN_YANYUN, file_input]): return
+    
+    basename = os.path.basename(file_input)
+    stem = os.path.splitext(basename)[0]
+    unpacked_path = os.path.join(OUTPUT_DIR, stem)
+    
+    print(t("msg_done"))
+    print(f"Output directory: {unpacked_path}")
+
+
 def task_unpack():
     clean_workspace()
-    words_map_input = input(t("prompt_words_map")).strip()
     
-    local_words_map = os.path.join(WORKS_DIR, "words_map")
+    # 1. Base Map
+    base_input = input(f"{t('prompt_words_map')} (Base): ").strip().strip("'\"")
+    if not base_input: return
     
-    if words_map_input.startswith("http"):
-        print("Downloading...")
-        if not download_file(words_map_input, local_words_map):
-            return
-    else:
-        # Remove quotes if present
-        words_map_input = words_map_input.strip("'\"")
-        if not os.path.exists(words_map_input):
-            print(t("msg_file_not_found").format(words_map_input))
-            return
-        if os.path.isdir(words_map_input):
-            print(t("msg_error").format(f"Expected a file, but got a directory: {words_map_input}"))
-            return
-        shutil.copy(words_map_input, local_words_map)
+    local_base = os.path.join(WORKS_DIR, "base")
+    if base_input.startswith("http"):
+        if not download_file(base_input, os.path.join(WORKS_DIR, "base_map")): return
+        base_input = os.path.join(WORKS_DIR, "base_map")
+    
+    if not os.path.exists(base_input):
+        print(t("msg_file_not_found").format(base_input))
+        return
 
-    print(t("msg_unpacking"))
+    print(f"Unpacking Base: {base_input}")
+    os.makedirs(local_base, exist_ok=True)
+    shutil.copy(base_input, os.path.join(local_base, "words_map")) # Helper for unpack_map logic if needed, but we pass path directly
+    
     ensure_executable(BIN_YANYUN)
+    if not run_command([BIN_YANYUN, base_input]): return
     
-    # Run yanyun unpack
-    # ./bin/yanyun ./works/words_map
-    if not run_command([BIN_YANYUN, local_words_map]):
+    # yanyun outputs to "output/<basename>", need to move to works/base
+    # The tool uses the basename of input file. 
+    # To avoid confusion, let's look at where it outputted.
+    # Actually yanyun outputs to `./output/` relative to CWD.
+    basename = os.path.basename(base_input)
+    # yanyun binary uses hardcoded "output" dir in CWD
+    
+    # Wait, yanyun binary behavior:
+    # "let output_dir = Path::new(OUTPUT_DIR).join(file_stem);"
+    # OUTPUT_DIR is "output".
+    # So if input is ".../translate_words_map_en", output is "./output/translate_words_map_en"
+    
+    stem = os.path.splitext(basename)[0]
+    unpacked_path = os.path.join(OUTPUT_DIR, stem) # ./output/translate_words_map_en
+    
+    if os.path.exists(unpacked_path):
+        if os.path.exists(local_base): 
+            shutil.rmtree(local_base, ignore_errors=True)
+        shutil.move(unpacked_path, local_base)
+    else:
+        print(t("msg_error").format(f"Unpacked directory not found: {unpacked_path}"))
         return
 
-    # Check output
-    output_text_dir = os.path.join(OUTPUT_DIR, "words_map", "text")
-    if not os.path.exists(output_text_dir) or not os.listdir(output_text_dir):
-        print(t("msg_error").format("No files unpacked"))
-        return
+    # 2. Diff Map (Optional)
+    diff_input = input(f"{t('prompt_words_map')} (Diff) [Optional]: ").strip().strip("'\"")
+    has_diff = False
+    
+    if diff_input:
+        local_diff = os.path.join(WORKS_DIR, "diff")
+        if diff_input.startswith("http"):
+             if not download_file(diff_input, os.path.join(WORKS_DIR, "diff_map")): return
+             diff_input = os.path.join(WORKS_DIR, "diff_map")
+        
+        if os.path.exists(diff_input):
+            print(f"Unpacking Diff: {diff_input}")
+            if run_command([BIN_YANYUN, diff_input]):
+                diff_basename = os.path.basename(diff_input)
+                diff_stem = os.path.splitext(diff_basename)[0]
+                diff_unpacked_path = os.path.join(OUTPUT_DIR, diff_stem)
+                
+                if os.path.exists(diff_unpacked_path):
+                    if os.path.exists(local_diff): 
+                        shutil.rmtree(local_diff, ignore_errors=True)
+                    shutil.move(diff_unpacked_path, local_diff)
+                    has_diff = True
+                else:
+                     print(t("msg_error").format(f"Unpacked directory not found: {diff_unpacked_path}"))
+        else:
+             print(t("msg_file_not_found").format(diff_input))
 
-    # Zip output
-    zip_path = os.path.join(OUTPUT_DIR, "unpacked_words_map.zip")
-    print(f"Zipping to {zip_path}...")
+    # 3. Create Merged View
+    # Copy base text -> works/words_map/text
+    # Copy diff text -> works/words_map/text (overwrite)
+    print("Creating merged text view...")
     
-    # cd ./output/words_map ; zip -r ../unpacked_words_map.zip ./text
-    # Python zipfile equivalent
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(os.path.join(OUTPUT_DIR, "words_map")):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, os.path.join(OUTPUT_DIR, "words_map"))
-                zipf.write(file_path, arcname)
+    merged_view_dir = os.path.join(OUTPUT_DIR, "words_map") # Output to ./output/words_map
+    os.makedirs(merged_view_dir, exist_ok=True)
     
+    base_text = os.path.join(local_base, "text")
+    merged_text = os.path.join(merged_view_dir, "text")
+    
+    if os.path.exists(base_text):
+        shutil.copytree(base_text, merged_text, dirs_exist_ok=True)
+        
+    if has_diff:
+        diff_text = os.path.join(WORKS_DIR, "diff", "text")
+        if os.path.exists(diff_text):
+            # shutil.copytree with dirs_exist_ok=True overwrites
+            shutil.copytree(diff_text, merged_text, dirs_exist_ok=True)
+    
+    # Also merge entries.json files
+    import json
+    base_entries_path = os.path.join(local_base, "entries.json")
+    merged_entries = {}
+    if os.path.exists(base_entries_path):
+        with open(base_entries_path, 'r', encoding='utf-8') as f:
+            merged_entries = json.load(f)
+    
+    if has_diff:
+        diff_entries_path = os.path.join(WORKS_DIR, "diff", "entries.json")
+        if os.path.exists(diff_entries_path):
+            with open(diff_entries_path, 'r', encoding='utf-8') as f:
+                diff_entries = json.load(f)
+                merged_entries.update(diff_entries)
+    
+    merged_entries_path = os.path.join(merged_view_dir, "entries.json")
+    with open(merged_entries_path, 'w', encoding='utf-8') as f:
+        json.dump(merged_entries, f, ensure_ascii=False, indent=2)
+    
+    # Copy tables from base (needed for packing)
+    base_tables = os.path.join(local_base, "tables")
+    merged_tables = os.path.join(merged_view_dir, "tables")
+    if os.path.exists(base_tables):
+        if os.path.exists(merged_tables):
+            shutil.rmtree(merged_tables, ignore_errors=True)
+        shutil.copytree(base_tables, merged_tables)
+            
     print(t("msg_done"))
-    print(f"Output: {zip_path}")
-    print(f"Unpacked text directory: {output_text_dir}")
+    print(f"Merged text directory: {merged_text}")
+    print("You can now translate this directory.")
+
 
 def task_pack():
-    clean_workspace()
+    # clean_workspace() # Don't clean, we need the unpacked Base/Diff in ./works/base and ./works/diff
     
-    # Input original words_map
-    words_map_input = input(t("prompt_words_map")).strip()
-    local_words_map = os.path.join(WORKS_DIR, "words_map")
+    # Check if we have previous unpacked state
+    local_base = os.path.join(WORKS_DIR, "base")
+    local_diff = os.path.join(WORKS_DIR, "diff")
     
-    if words_map_input.startswith("http"):
-        if not download_file(words_map_input, local_words_map): return
-    else:
-        words_map_input = words_map_input.strip("'\"")
-        if not os.path.exists(words_map_input):
-            print(t("msg_file_not_found").format(words_map_input))
-            return
-        if os.path.isdir(words_map_input):
-            print(t("msg_error").format(f"Expected a file, but got a directory: {words_map_input}"))
-            return
-        shutil.copy(words_map_input, local_words_map)
-
-    # Input patched source
-    patched_input = input(t("prompt_patched_zip")).strip()
-    patched_input = patched_input.strip("'\"")
-    
-    # 1. Unpack original words_map to ./output/words_map
-    if not run_command([BIN_YANYUN, local_words_map]): return
-
-    # 2. Prepare patch directory
-    patch_dir = os.path.join(WORKS_DIR, "patch")
-    os.makedirs(patch_dir, exist_ok=True)
-
-    if os.path.isdir(patched_input):
-        # Case: Input is a directory
-        print(f"Copying files from {patched_input}...")
-        for item in os.listdir(patched_input):
-            s = os.path.join(patched_input, item)
-            d = os.path.join(patch_dir, item)
-            if os.path.isdir(s):
-                shutil.copytree(s, d, dirs_exist_ok=True)
-            else:
-                shutil.copy2(s, d)
-    else:
-        # Case: Input is a zip file or URL
-        local_patched_zip = os.path.join(WORKS_DIR, "patched.zip")
+    if not os.path.exists(local_base):
+        print(t("msg_error").format("Base directory not found in workspace. Please Unpack first."))
+        return
         
-        if patched_input.startswith("http"):
-            if not download_file(patched_input, local_patched_zip): return
-        else:
-            if not os.path.exists(patched_input):
-                print(t("msg_file_not_found").format(patched_input))
-                return
-            shutil.copy(patched_input, local_patched_zip)
-
-        print(t("msg_packing"))
-        ensure_executable(BIN_YANYUN)
-
-        # Unzip patched files
-        tmp_dir = os.path.join(WORKS_DIR, "tmp")
-        os.makedirs(tmp_dir, exist_ok=True)
+    patch_source = input(f"{t('prompt_patched_zip')} (default: ./dich-xong): ").strip().strip("'\"")
+    if not patch_source:
+        patch_source = "./dich-xong"
         
-        with zipfile.ZipFile(local_patched_zip, 'r') as zip_ref:
-            zip_ref.extractall(tmp_dir)
-        
-        # Handle potential subfolder in zip
-        items = os.listdir(tmp_dir)
-        real_items = [i for i in items if not (i.startswith("._") or i == "__MACOSX" or i == ".DS_Store")]
-
-        if len(real_items) == 1 and os.path.isdir(os.path.join(tmp_dir, real_items[0])):
-            src = os.path.join(tmp_dir, real_items[0])
-            for item in os.listdir(src):
-                force_move(os.path.join(src, item), patch_dir)
-        else:
-            for item in items:
-                force_move(os.path.join(tmp_dir, item), patch_dir)
-                
-        shutil.rmtree(tmp_dir)
-
-    # 3. Merge text
-    # python3 ./scripts/merge-text.py ./output/words_map ./works/patch
-    output_words_map_dir = os.path.join(OUTPUT_DIR, "words_map")
-    if not run_command([sys.executable, SCRIPT_MERGE, output_words_map_dir, patch_dir]): return
-
-    # 4. Cleanup metadata
-    subprocess.run(["find", output_words_map_dir, "-name", "._*", "-delete"], stderr=subprocess.DEVNULL)
-
-    # 5. Pack
-    # ./bin/yanyun ./output/words_map
-    if not run_command([BIN_YANYUN, output_words_map_dir]): return
-
-    # 5. Check result
-    merged_file = os.path.join(output_words_map_dir, "merged", "words_map")
-    if not os.path.exists(merged_file):
-        print(t("msg_error").format("Merged file not found"))
+    if not os.path.exists(patch_source):
+        print(t("msg_file_not_found").format(patch_source))
         return
 
-    # 6. Move to output
-    final_output = os.path.join(OUTPUT_DIR, "translate_words_map_en")
-    shutil.move(merged_file, final_output)
+    # Prepare patch source (unzip if needed)
+    final_patch_source = patch_source
+    temp_extract_dir = None
     
-    # 7. Copy diff file
-    diff_src = "./archive/words_map_diff"
-    if os.path.exists(diff_src):
-        shutil.copy(diff_src, final_output + "_diff")
+    if os.path.isfile(patch_source) and patch_source.endswith(".zip"):
+        temp_extract_dir = os.path.join(WORKS_DIR, "temp_patch")
+        print("Unzipping patch...")
+        with zipfile.ZipFile(patch_source, 'r') as zip_ref:
+            zip_ref.extractall(temp_extract_dir)
+        final_patch_source = temp_extract_dir
+
+    print(t("msg_packing"))
+    ensure_executable(BIN_YANYUN)
+
+    # 1. Update Base
+    print("Updating & Packing Base...")
+    # scripts/merge-text.py <target> <source>
+    if not run_command([sys.executable, SCRIPT_MERGE, local_base, final_patch_source]): return
     
+    # Cleanup metadata
+    subprocess.run(["find", local_base, "-name", "._*", "-delete"], stderr=subprocess.DEVNULL)
+    
+    # Pack Base
+    if not run_command([BIN_YANYUN, local_base]): return
+    
+    # Move Base Output
+    # The tool outputs merged file to <input_dir>/merged/words_map
+    base_packed = os.path.join(local_base, "merged", os.path.basename(local_base)) # "base"
+    # Actually yanyun uses the folder name as filename. 
+    # If we renamed folder to 'base', it outputs 'base'.
+    # Check what yanyun does: "let file_name = dir_path.file_stem()..."
+    # Yes, it uses folder name.
+    
+    # To get correct filename "translate_words_map_en", rename 'base' folder?
+    # Or just rename the result.
+    base_result_src = os.path.join(local_base, "merged", "base")
+    if not os.path.exists(base_result_src):
+         # Try looking for other files if name mismatch
+         merged_dir = os.path.join(local_base, "merged")
+         if os.path.exists(merged_dir):
+             files = os.listdir(merged_dir)
+             if files: base_result_src = os.path.join(merged_dir, files[0])
+    
+    final_base_dst = os.path.join(OUTPUT_DIR, "translate_words_map_en")
+    shutil.move(base_result_src, final_base_dst)
+    
+    # 2. Update Diff (if exists)
+    if os.path.exists(local_diff):
+        print("Updating & Packing Diff...")
+        if not run_command([sys.executable, SCRIPT_MERGE, local_diff, final_patch_source]): return
+        
+        subprocess.run(["find", local_diff, "-name", "._*", "-delete"], stderr=subprocess.DEVNULL)
+        if not run_command([BIN_YANYUN, local_diff]): return
+        
+        # Diff packed
+        diff_result_src = os.path.join(local_diff, "merged", "diff")
+        if not os.path.exists(diff_result_src):
+             merged_dir = os.path.join(local_diff, "merged")
+             if os.path.exists(merged_dir):
+                 files = os.listdir(merged_dir)
+                 if files: diff_result_src = os.path.join(merged_dir, files[0])
+        
+        final_diff_dst = os.path.join(OUTPUT_DIR, "translate_words_map_en_diff")
+        shutil.move(diff_result_src, final_diff_dst)
+
+    if temp_extract_dir:
+        shutil.rmtree(temp_extract_dir)
+
     print(t("msg_done"))
-    print(f"Output: {final_output}")
+    print(f"Base Output: {final_base_dst}")
+    if os.path.exists(local_diff):
+        print(f"Diff Output: {os.path.join(OUTPUT_DIR, 'translate_words_map_en_diff')}")
 
 
 def task_translate():
@@ -302,6 +389,7 @@ def main():
     while True:
         print("\n" + t("menu_title"))
         print(t("menu_unpack"))
+        print(t("menu_unpack_single"))
         print(t("menu_pack"))
         print(t("menu_translate"))
         print(t("menu_lang"))
@@ -312,10 +400,12 @@ def main():
         if choice == "1":
             task_unpack()
         elif choice == "2":
-            task_pack()
+            task_unpack_single()
         elif choice == "3":
-            task_translate()
+            task_pack()
         elif choice == "4":
+            task_translate()
+        elif choice == "5":
             current_lang = "vi" if current_lang == "en" else "en"
             clear_screen()
         elif choice == "0":

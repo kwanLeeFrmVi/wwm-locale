@@ -30,13 +30,20 @@ def merge_text_files(base_dir, patch_dir, save_missing=False):
     text_dir = os.path.join(base_dir, "text")
     output_file = os.path.join(base_dir, "entries.json")
 
-    # merge original data first
-    for filename in os.listdir(text_dir):
-        if filename.endswith(".json") and not filename.startswith("."):
-            orig_filepath = os.path.join(text_dir, filename)
-            data = read_json_file(orig_filepath)
-            
-            merged_data.update(data)
+    # Check if entries.json exists (new format) or text/ dir (old format)
+    if os.path.exists(output_file):
+        # New format: load directly from entries.json
+        merged_data = read_json_file(output_file)
+    elif os.path.exists(text_dir):
+        # Old format: merge from text/ directory
+        for filename in os.listdir(text_dir):
+            if filename.endswith(".json") and not filename.startswith("."):
+                orig_filepath = os.path.join(text_dir, filename)
+                data = read_json_file(orig_filepath)
+                merged_data.update(data)
+    else:
+        print(f"Error: Neither {output_file} nor {text_dir} found")
+        return
 
     # track all keys from base for missing detection
     base_keys = set(merged_data.keys())
@@ -70,21 +77,22 @@ def merge_text_files(base_dir, patch_dir, save_missing=False):
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(merged_data, f, ensure_ascii=False, indent=2)
 
-    # sync merged values back into per-file text shards so packer picks them up
-    for filename in os.listdir(text_dir):
-        if filename.endswith(".json") and not filename.startswith("."):
-            shard_path = os.path.join(text_dir, filename)
-            shard_data = read_json_file(shard_path)
+    # sync merged values back into per-file text shards so packer picks them up (old format only)
+    if os.path.exists(text_dir):
+        for filename in os.listdir(text_dir):
+            if filename.endswith(".json") and not filename.startswith("."):
+                shard_path = os.path.join(text_dir, filename)
+                shard_data = read_json_file(shard_path)
 
-            updated = False
-            for key in list(shard_data.keys()):
-                if key in merged_data and shard_data[key] != merged_data[key]:
-                    shard_data[key] = merged_data[key]
-                    updated = True
+                updated = False
+                for key in list(shard_data.keys()):
+                    if key in merged_data and shard_data[key] != merged_data[key]:
+                        shard_data[key] = merged_data[key]
+                        updated = True
 
-            if updated:
-                with open(shard_path, "w", encoding="utf-8") as f:
-                    json.dump(shard_data, f, ensure_ascii=False, indent=2)
+                if updated:
+                    with open(shard_path, "w", encoding="utf-8") as f:
+                        json.dump(shard_data, f, ensure_ascii=False, indent=2)
 
     # save missing keys if --miss flag is set
     if save_missing:
