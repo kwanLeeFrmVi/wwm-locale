@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import shutil
+import sys
 import time
 
 
@@ -11,12 +12,19 @@ def read_json_file(filepath):
         try:
             with open(filepath, "r", encoding=enc) as f:
                 return json.load(f)
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        except UnicodeDecodeError:
             continue
+        except json.JSONDecodeError as e:
+            msg = f"{e.msg} (file={filepath}, encoding={enc})"
+            raise json.JSONDecodeError(msg, e.doc, e.pos) from None
 
     with open(filepath, "rb") as f:
         content = f.read().decode("utf-8", errors="replace")
-    return json.loads(content)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        msg = f"{e.msg} (file={filepath}, encoding=utf-8/replace)"
+        raise json.JSONDecodeError(msg, e.doc, e.pos) from None
 
 
 def iter_json_files(directory):
@@ -34,6 +42,7 @@ def main():
     parser.add_argument("--dir", dest="target_dir", default="./dich-xong")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-backup", action="store_true")
+    parser.add_argument("--skip-invalid", action="store_true")
     args = parser.parse_args()
 
     if not os.path.exists(args.map_path):
@@ -58,7 +67,13 @@ def main():
     for path in iter_json_files(args.target_dir):
         total_files += 1
 
-        data = read_json_file(path)
+        try:
+            data = read_json_file(path)
+        except json.JSONDecodeError as e:
+            if args.skip_invalid:
+                print(str(e), file=sys.stderr)
+                continue
+            raise
         if not isinstance(data, dict):
             continue
 
