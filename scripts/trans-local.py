@@ -175,12 +175,24 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
 
             # Validate key count matches input
             if len(translated_chunk) != len(chunk_data):
+                missing_keys = set(chunk_data.keys()) - set(translated_chunk.keys())
+                extra_keys = set(translated_chunk.keys()) - set(chunk_data.keys())
+                
+                if missing_keys:
+                    spinner.warn(f"Missing keys: {list(missing_keys)[:3]}...")
+                if extra_keys:
+                    spinner.warn(f"Extra keys: {list(extra_keys)[:3]}...")
+                
                 if attempt < max_retries - 1:
                     spinner.warn(f"Key count mismatch ({len(translated_chunk)}/{len(chunk_data)}). Retrying ({attempt + 1}/{max_retries})...")
+                    time.sleep(3)
                     continue
                 else:
-                    spinner.fail(f"Failed: output has {len(translated_chunk)} keys, expected {len(chunk_data)}.")
-                    return None
+                    # On final failure, fill in missing keys with original values
+                    spinner.warn(f"Final attempt failed. Filling missing keys with original values.")
+                    for key in missing_keys:
+                        translated_chunk[key] = chunk_data[key]
+                    return translated_chunk
 
             # Validate for Chinese characters (skip technical strings)
             has_chinese = False

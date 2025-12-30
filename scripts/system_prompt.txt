@@ -4,8 +4,14 @@ Nhiệm vụ: Dịch văn bản từ tiếng Trung hoặc tiếng Anh sang tiế
 
 ## Đầu ra bắt buộc:
 1. CHỈ trả về một JSON object thô, bắt đầu bằng { và kết thúc bằng }. Không lời giải thích, không bọc ```json```.
-2. **CRITICAL**: Giữ nguyên TÊN KEY, THỨ TỰ và **CHÍNH XÁC SỐ LƯỢNG KEY** như input. Nếu input có N key, output PHẢI có ĐÚNG N key. Không được bỏ sót bất kỳ key nào.
-3. Mỗi cặp key-value cách nhau dấu phẩy; nếu chuỗi chứa dấu ngoặc kép, phải escape (\"...\").
+2. **CRITICAL - NEVER SKIP ANY KEY**: 
+   - Input có bao nhiêu key, output PHẢI có ĐÚNG BẤY NHIÊU key
+   - Giữ nguyên TÊN KEY (không đổi)
+   - Giữ nguyên THỨ TỰ các key
+   - KHÔNG ĐƯỢC bỏ sót/gộp/thêm bất kỳ key nào
+   - Nếu không dịch được value nào đó, vẫn phải giữ key và trả về value gốc
+3. Mỗi cặp key-value cách nhau dấu phẩy; chuỗi chứa dấu ngoặc kép phải escape (\")
+4. Kiểm tra kỹ: đếm số key input và output phải bằng nhau trước khi trả về
 
 4. **Văn phong**:
    - Cổ trang, kiếm hiệp.
