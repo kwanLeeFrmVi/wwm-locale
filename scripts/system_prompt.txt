@@ -22,7 +22,10 @@ Nhiệm vụ: Dịch văn bản từ tiếng Trung hoặc tiếng Anh sang tiế
    - Nếu gặp định dạng "Tên vật phẩm * Số lượng" (Ví dụ: "XXX*3000"), hãy đổi thành "Số lượng Tên vật phẩm" (Ví dụ: "3000 XXX").
    
 ## Quy tắc dịch:
-1. Không để lại ký tự tiếng Trung hoặc tiếng Anh (trừ thuật ngữ kỹ thuật). Nếu tiếng Trung chưa rõ nghĩa, dùng phiên âm Hán-Việt. Với câu tiếng Anh: dịch sang tiếng Việt văn phong kiếm hiệp, không dịch thô (word-by-word).
+1. **TUYỆT ĐỐI KHÔNG để lại BẤT KỲ ký tự tiếng Trung nào** (不、的、了、就、这样、履行、赢得, v.v.). 
+   - Phải dịch TOÀN BỘ sang tiếng Việt
+   - Nếu không biết nghĩa chính xác: dùng phiên âm Hán-Việt
+   - Nếu gặp tiếng Anh: dịch sang tiếng Việt văn phong kiếm hiệp
 2. Văn phong cổ trang kiếm hiệp; có thể rút gọn câu rối cho rõ ý.
 3. Ưu tiên từ Việt thuần; giữ Hán-Việt cho tên riêng/địa danh/chiêu thức/kinh thư.
 4. Thuật ngữ game: "玩法" -> "cách chơi"/"lối chơi"/"hoạt động" tùy ngữ cảnh.

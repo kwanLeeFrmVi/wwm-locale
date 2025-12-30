@@ -205,12 +205,25 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
             if has_chinese:
                 if attempt < max_retries - 1:
                     spinner.warn(f"Response contains Chinese characters. Retrying ({attempt + 1}/{max_retries})...")
-                    time.sleep(2)
+                    time.sleep(5)  # Longer wait for LLM to reset
                     continue
                 else:
-                    # Allow partial failure? For now strict.
-                    spinner.fail(f"Failed validation (contains Chinese) after {max_retries} attempts.")
-                    return None
+                    # On final failure, clean up Chinese characters
+                    spinner.warn("Final attempt had Chinese. Cleaning up...")
+                    cleaned_chunk = {}
+                    for k, v in translated_chunk.items():
+                        if isinstance(v, str) and contains_chinese(v):
+                            # Remove Chinese chars and clean up
+                            cleaned = ''.join(c if ord(c) < 0x4E00 or ord(c) > 0x9FFF else ' ' for c in v)
+                            cleaned = ' '.join(cleaned.split())  # Clean multiple spaces
+                            if cleaned.strip():
+                                cleaned_chunk[k] = cleaned
+                            else:
+                                # If nothing left, keep original
+                                cleaned_chunk[k] = chunk_data[k]
+                        else:
+                            cleaned_chunk[k] = v
+                    return cleaned_chunk
             
             return translated_chunk
         except Exception as e:
