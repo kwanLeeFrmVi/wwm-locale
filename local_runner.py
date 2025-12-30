@@ -4,6 +4,7 @@ import sys
 import shutil
 import subprocess
 import zipfile
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -13,6 +14,7 @@ load_dotenv()
 BIN_YANYUN = "./bin/yanyun"
 SCRIPT_MERGE = "./scripts/merge-text.py"
 SCRIPT_TRANS = "./scripts/trans-local.py"
+SCRIPT_EXTRACT = "./scripts/extract-missing-keys.py"
 WORKS_DIR = os.path.abspath("./works")
 OUTPUT_DIR = os.path.abspath("./output")
 
@@ -24,7 +26,8 @@ LANG = {
         "menu_unpack_single": "2. Unpack single file",
         "menu_pack": "3. Pack words_map",
         "menu_translate": "4. Translate text",
-        "menu_lang": "5. Đổi ngôn ngữ (Tiếng Việt)",
+        "menu_extract": "5. Extract missing keys from entries.json",
+        "menu_lang": "6. Đổi ngôn ngữ (Tiếng Việt)",
         "menu_exit": "0. Exit",
         "prompt_choice": "Choose an option: ",
         "prompt_words_map": "Enter path or URL to words_map file: ",
@@ -46,7 +49,8 @@ LANG = {
         "menu_unpack_single": "2. Giải nén file đơn",
         "menu_pack": "3. Đóng gói words_map",
         "menu_translate": "4. Dịch văn bản",
-        "menu_lang": "5. Switch Language (English)",
+        "menu_extract": "5. Trích xuất key thiếu từ entries.json",
+        "menu_lang": "6. Switch Language (English)",
         "menu_exit": "0. Thoát",
         "prompt_choice": "Chọn một tùy chọn: ",
         "prompt_words_map": "Nhập đường dẫn hoặc URL đến file words_map: ",
@@ -251,6 +255,39 @@ def task_unpack():
     with open(merged_entries_path, 'w', encoding='utf-8') as f:
         json.dump(merged_entries, f, ensure_ascii=False, indent=2)
     
+    # Extract keys from entries.json that are missing in text/ dir
+    print("Checking for keys missing in text/ directory...")
+    text_keys = set()
+    for json_file in Path(merged_text).glob("*.json"):
+        if not json_file.name.startswith("._"):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    text_keys.update(json.load(f).keys())
+            except Exception:
+                pass
+    
+    missing_keys = set(merged_entries.keys()) - text_keys
+    if missing_keys:
+        print(f"Found {len(missing_keys)} keys in entries.json not present in text/ directory")
+        print("Extracting missing keys (split into chunks)...")
+        missing_data = {k: merged_entries[k] for k in missing_keys}
+        
+        # Split into chunks of 265 keys (matching existing file size)
+        chunk_size = 265
+        missing_list = sorted(missing_keys)
+        chunk_count = 0
+        
+        for i in range(0, len(missing_list), chunk_size):
+            chunk_keys = missing_list[i:i + chunk_size]
+            chunk_data = {k: missing_data[k] for k in chunk_keys}
+            chunk_count += 1
+            
+            missing_file = os.path.join(merged_text, f"missing_{chunk_count:05d}.json")
+            with open(missing_file, 'w', encoding='utf-8') as f:
+                json.dump(chunk_data, f, ensure_ascii=False, indent=2)
+        
+        print(f"Extracted {len(missing_keys)} missing keys into {chunk_count} files (missing_00001.json - missing_{chunk_count:05d}.json)")
+    
     # Copy tables from base (needed for packing)
     base_tables = os.path.join(local_base, "tables")
     merged_tables = os.path.join(merged_view_dir, "tables")
@@ -361,7 +398,7 @@ def task_translate():
     default_dir = os.path.join(OUTPUT_DIR, "words_map", "text")
     prompt = f"{t('prompt_source_dir')} [{default_dir}]: "
     
-    source_dir = input(prompt).strip().strip("'\"")
+    source_dir = input(prompt).strip().strip('\"')
     if not source_dir:
         source_dir = default_dir
         
@@ -371,7 +408,7 @@ def task_translate():
 
     default_out = "./dich-xong"
     prompt_out = f"{t('prompt_output_dir')} [{default_out}]: "
-    output_dir = input(prompt_out).strip().strip("'\"")
+    output_dir = input(prompt_out).strip().strip('\"')
     if not output_dir:
         output_dir = default_out
 
@@ -384,6 +421,44 @@ def task_translate():
     print(t("msg_done"))
 
 
+def task_extract_missing():
+    default_entries = os.path.join(OUTPUT_DIR, "words_map", "entries.json")
+    prompt_entries = f"Enter path to entries.json [{default_entries}]: "
+    
+    entries_path = input(prompt_entries).strip().strip('\"')
+    if not entries_path:
+        entries_path = default_entries
+    
+    if not os.path.exists(entries_path):
+        print(t("msg_file_not_found").format(entries_path))
+        return
+    
+    default_dich_xong = "./dich-xong"
+    prompt_dich_xong = f"Enter path to dich-xong folder [{default_dich_xong}]: "
+    
+    dich_xong_path = input(prompt_dich_xong).strip().strip('\"')
+    if not dich_xong_path:
+        dich_xong_path = default_dich_xong
+    
+    if not os.path.exists(dich_xong_path):
+        print(t("msg_file_not_found").format(dich_xong_path))
+        return
+    
+    default_output = "./missing-keys"
+    prompt_output = f"Enter output folder for missing keys [{default_output}]: "
+    
+    output_path = input(prompt_output).strip().strip('\"')
+    if not output_path:
+        output_path = default_output
+    
+    print("Extracting missing keys...")
+    cmd = [sys.executable, SCRIPT_EXTRACT, entries_path, dich_xong_path, output_path]
+    run_command(cmd)
+    
+    print(t("msg_done"))
+    print(f"\nNext step: Run option 4 to translate the extracted files in '{output_path}'")
+
+
 def main():
     global current_lang
     while True:
@@ -392,6 +467,7 @@ def main():
         print(t("menu_unpack_single"))
         print(t("menu_pack"))
         print(t("menu_translate"))
+        print(t("menu_extract"))
         print(t("menu_lang"))
         print(t("menu_exit"))
         
@@ -406,6 +482,8 @@ def main():
         elif choice == "4":
             task_translate()
         elif choice == "5":
+            task_extract_missing()
+        elif choice == "6":
             current_lang = "vi" if current_lang == "en" else "en"
             clear_screen()
         elif choice == "0":
