@@ -102,7 +102,6 @@
   "5400167386064848299": "Cố Ứng Đông",
   "5400134750039636672": "Ngũ Thạch Tán",
   "5401405921810783754": "Kiếm Khách Quỷ Yến Đường",
-  "5397195445441636578": "Xanh lam",
   "5398494773744440717": "Kinh Mạch",
   "5401263222499170835": "Ồ? Huynh còn tìm thấy gì khác khi bị giam dưới lòng đất không?",
   "5403296156059065615": "Trò chuyện",
@@ -155,6 +154,5 @@
   "5399627133205526325": "Đang lấy dữ liệu...",
   "5403551102181029758": "Này lãng khách! Thử tỉ thí câu cá một chút để xem ai mới là tay câu cừ khôi nhất vùng này không?",
   "5402199827800996143": "Ta đã có những thứ này rồi. Huynh hãy giữ lấy cho mình đi!",
-  "5403513236318559985": "Bảng Xếp Hạng Vô Thanh",
-  "5397425523235997310": "<Affinity Rate|780|#C|23> can be increased based on Power. Current bonus: #Y{0:.1%}#E. Maximum bonus requires #Y25#E <Power|780|#C|8> ($STEADY_STR:.0f$ now)."
+  "5403513236318559985": "Bảng Xếp Hạng Vô Thanh"
 }

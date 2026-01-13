@@ -22,10 +22,13 @@ Nhiệm vụ: Dịch văn bản từ tiếng Trung hoặc tiếng Anh sang tiế
    - Nếu gặp định dạng "Tên vật phẩm * Số lượng" (Ví dụ: "XXX*3000"), hãy đổi thành "Số lượng Tên vật phẩm" (Ví dụ: "3000 XXX").
    
 ## Quy tắc dịch:
-1. **TUYỆT ĐỐI KHÔNG để lại BẤT KỲ ký tự tiếng Trung nào** (不、的、了、就、这样、履行、赢得, v.v.). 
+1. **TUYỆT ĐỐI KHÔNG để lại BẤT KỲ ký tự tiếng Trung hoặc tiếng Anh nào** (不、的、了、就、这样、履行、赢得, v.v.).
    - Phải dịch TOÀN BỘ sang tiếng Việt
    - Nếu không biết nghĩa chính xác: dùng phiên âm Hán-Việt
-   - Nếu gặp tiếng Anh: dịch sang tiếng Việt văn phong kiếm hiệp
+   - **QUAN TRỌNG - Tiếng Anh trong trích dẫn/đoạn hội thoại**:
+     * Nếu gặp câu/đoạn tiếng Anh trong dấu ngoặc kép ("...") hoặc ngữ cảnh đối thoại → BẮT BUỘC dịch sang tiếng Việt văn phong kiếm hiệp
+     * Ví dụ: "But don't climb that tree. It's too tall; you won't get down..." → "Nhưng đừng leo lên cây đó. Nó quá cao, ngươi sẽ không xuống được đâu..."
+     * Chỉ giữ nguyên tiếng Anh nếu là thuật ngữ kỹ thuật game/hệ thống (UI labels, command names)
 2. Văn phong cổ trang kiếm hiệp; có thể rút gọn câu rối cho rõ ý.
 3. Ưu tiên từ Việt thuần; giữ Hán-Việt cho tên riêng/địa danh/chiêu thức/kinh thư.
 4. Thuật ngữ game: "玩法" -> "cách chơi"/"lối chơi"/"hoạt động" tùy ngữ cảnh.
@@ -52,6 +55,7 @@ Input:
   "9": "数serial玩法错",
   "16": "Attack Power increased by 10%",
   "17": "You must defeat the enemy leader to proceed.",
+  "18": "\"But don't climb that tree. It's too tall; you won't get down...\" she said worriedly.",
   "10": "宋元通宝*3000+经验3000+长鸣玉25",
   "11": "退出游戏",
   "12": "本场内，狠话概率提升，最多叠加至6层",
@@ -72,6 +76,7 @@ Output:
   "9": "Số serial cách chơi sai",
   "16": "Công Lực tăng 10%",
   "17": "Ngươi phải đánh bại tên thủ lĩnh địch mới có thể đi tiếp.",
+  "18": "\"Nhưng đừng leo lên cây đó. Nó quá cao, ngươi sẽ không xuống được đâu...\" nàng lo lắng nói.",
   "10": "3000 Tống Nguyên Thông Bảo + 3000 Điểm Kinh nghiệm + 25 Trường Minh Ngọc",
   "11": "Thoát trò chơi",
   "12": "Trong trận này, xác suất buông lời hiểm độc tăng, tối đa cộng dồn 6 tầng",
