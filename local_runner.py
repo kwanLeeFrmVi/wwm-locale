@@ -249,7 +249,10 @@ def task_unpack():
         if os.path.exists(diff_entries_path):
             with open(diff_entries_path, 'r', encoding='utf-8') as f:
                 diff_entries = json.load(f)
-                merged_entries.update(diff_entries)
+                # Only update if diff value is non-empty (skip 0xFF markers that became "")
+                for key, value in diff_entries.items():
+                    if value:  # Skip empty strings
+                        merged_entries[key] = value
     
     merged_entries_path = os.path.join(merged_view_dir, "entries.json")
     with open(merged_entries_path, 'w', encoding='utf-8') as f:

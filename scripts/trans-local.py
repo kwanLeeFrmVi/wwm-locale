@@ -227,17 +227,29 @@ def translate_chunk(client, model, system_prompt, chunk_data, spinner, max_retri
             
             return translated_chunk
         except Exception as e:
+            import random
             error_msg = str(e)
-            # Detect 502 Bad Gateway HTML being parsed as error or in message
-            if "502 Bad Gateway" in error_msg or "<html>" in error_msg:
-                 error_msg = "502 Bad Gateway (Server Overloaded)"
-                 # Increase wait time for server issues
-                 wait_time = 10 * (attempt + 1)
+            # Detect server/connection issues
+            is_server_error = any(x in error_msg.lower() for x in [
+                "502 bad gateway", "<html>", "connection error", 
+                "connection reset", "connection refused", "timeout",
+                "remotedisconnected", "connectionerror"
+            ])
+            
+            if is_server_error:
+                if "502" in error_msg:
+                    error_msg = "502 Bad Gateway (Server Overloaded)"
+                elif "connection" in error_msg.lower():
+                    error_msg = "Connection error"
+                # Exponential backoff with jitter for server issues
+                base_wait = 10 * (2 ** attempt)  # 10, 20, 40, 80...
+                jitter = random.uniform(0, 5)
+                wait_time = min(base_wait + jitter, 120)  # cap at 2 minutes
             else:
-                 wait_time = 5 * (attempt + 1)
+                wait_time = 5 * (attempt + 1)
 
             if attempt < max_retries - 1:
-                spinner.warn(f"Error: {error_msg}. Retrying in {wait_time}s...")
+                spinner.warn(f"Error: {error_msg}. Retrying in {wait_time:.0f}s...")
                 time.sleep(wait_time)
             else:
                 spinner.fail(f"Failed after {max_retries} attempts. Error: {error_msg}")
@@ -281,6 +293,9 @@ def process_file(idx, filename, input_file, output_file, total_files):
     reused_count = 0
     
     for k, v in source_data.items():
+        # Skip empty values (from 0xFF markers)
+        if not v or not isinstance(v, str) or not v.strip():
+            continue
         # Check global map
         if k in GLOBAL_TRANSLATION_MAP:
             reused_count += 1
@@ -328,70 +343,193 @@ def process_file(idx, filename, input_file, output_file, total_files):
     print(f"✔ [{idx + 1}/{total_files}] {filename} finished in {duration:.2f}s")
 
 
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python trans-local.py <source folder> <output folder>")
-        sys.exit(1)
-
-    missing_folder = sys.argv[1]
-    output_folder = sys.argv[2]
-
-    # Collect the streamed response
-    spinner = Halo(text="Processing", spinner="dots")
+def process_entries_chunk(idx, chunk_data, output_file, total_chunks, run_at):
+    """Process a chunk from entries.json."""
+    spinner = DummySpinner(f"chunk_{idx + 1}")
     
-    if not os.path.exists(missing_folder):
-        spinner.fail(f"Source folder '{missing_folder}' does not exist.")
-        sys.exit(1)
-
-    # list files in missing folder
-    files = sorted(os.listdir(missing_folder))
+    if not chunk_data:
+        print(f"✔ [{idx + 1}/{total_chunks}] Chunk empty, skipping")
+        return
     
-    # Filter only json files and ignore hidden/metadata files
-    json_files = [f for f in files if f.endswith(".json") and not f.startswith("._")]
+    # Filter out already translated keys
+    missing_data = {}
+    reused_count = 0
     
-    if not json_files:
-        spinner.warn(f"No JSON files found in '{missing_folder}'.")
-        sys.exit(0)
+    for k, v in chunk_data.items():
+        if k in GLOBAL_TRANSLATION_MAP:
+            reused_count += 1
+        else:
+            missing_data[k] = v
+    
+    if not missing_data:
+        print(f"✔ [{idx + 1}/{total_chunks}] chunk_{idx + 1} (Skipped - All {reused_count} keys exist)")
+        return
+    
+    print(f"[{idx + 1}/{total_chunks}] chunk_{idx + 1}: Reusing {reused_count}, Translating {len(missing_data)} NEW keys...")
+    
+    # Initialize OpenAI client
+    client = OpenAI(
+        base_url=openai_base_url,
+        api_key=auth_api_key,
+    )
+    
+    current_system_prompt = get_system_prompt()
+    started_at = time.time()
+    
+    translated_chunk = translate_chunk(client, openai_model, current_system_prompt, missing_data, spinner)
+    
+    if translated_chunk:
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(translated_chunk, f, ensure_ascii=False, indent=2)
+    else:
+        print(f"⚠ [{idx + 1}/{total_chunks}] Translation failed for chunk_{idx + 1}")
+        # Save original as fallback
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(missing_data, f, ensure_ascii=False, indent=2)
+    
+    duration = time.time() - started_at
+    print(f"✔ [{idx + 1}/{total_chunks}] chunk_{idx + 1} finished in {duration:.2f}s")
 
-    # Load global translations FIRST
+
+def process_entries_file(entries_path, output_folder, chunk_size=265):
+    """Stream process entries.json in chunks."""
+    spinner = Halo(text="Processing entries.json", spinner="dots")
+    
+    # Load entries.json
+    spinner.start("Loading entries.json...")
+    try:
+        with open(entries_path, 'r', encoding='utf-8') as f:
+            all_entries = json.load(f)
+    except Exception as e:
+        spinner.fail(f"Failed to read {entries_path}: {e}")
+        return
+    
+    # Filter out empty values
+    valid_entries = {k: v for k, v in all_entries.items() 
+                     if v and isinstance(v, str) and v.strip()}
+    
+    spinner.succeed(f"Loaded {len(valid_entries)} valid entries (filtered {len(all_entries) - len(valid_entries)} empty)")
+    
+    # Load existing translations
     load_global_translations(output_folder, spinner)
-    spinner.start()
-
+    
+    # Filter out already translated
+    missing_entries = {k: v for k, v in valid_entries.items() if k not in GLOBAL_TRANSLATION_MAP}
+    
+    if not missing_entries:
+        spinner.succeed("All entries already translated!")
+        return
+    
+    spinner.info(f"Need to translate {len(missing_entries)} entries")
+    
+    # Chunk the data
+    entries_list = list(missing_entries.items())
+    chunks = []
+    for i in range(0, len(entries_list), chunk_size):
+        chunk = dict(entries_list[i:i + chunk_size])
+        chunks.append(chunk)
+    
+    spinner.info(f"Split into {len(chunks)} chunks of ~{chunk_size} keys each")
+    
     now = datetime.now()
     run_at = (
-        f"{now.strftime('%y')}"  # Year in 2 digits
-        f"{now.strftime('%V')}"  # Week of year (ISO)
-        f"{now.strftime('%u')}"  # Day of week (1-7)
-        f"{now.strftime('%H')}"  # Hour 24h
-        f"{now.strftime('%M')}"  # Minute
+        f"{now.strftime('%y')}"
+        f"{now.strftime('%V')}"
+        f"{now.strftime('%u')}"
+        f"{now.strftime('%H')}"
+        f"{now.strftime('%M')}"
     )
-
-    # Process files in parallel
+    
+    os.makedirs(output_folder, exist_ok=True)
+    
+    # Process chunks in parallel
     default_workers = os.cpu_count() or 1
     worker_count = int(os.getenv("WORKER_COUNT", str(default_workers)))
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
     
     try:
         futures = []
-        for idx, filename in enumerate(json_files):
-            new_filename = replace_filename_pattern(filename, run_at)
-            input_file = os.path.join(missing_folder, filename)
-
-            if new_filename == filename:
-                output_file = os.path.join(output_folder, f"t{run_at}_{filename}")
-            else:
-                output_file = os.path.join(output_folder, new_filename)
-
-            futures.append(executor.submit(process_file, idx, filename, input_file, output_file, len(json_files)))
-
-        # Wait for all futures to complete
+        for idx, chunk_data in enumerate(chunks):
+            output_file = os.path.join(output_folder, f"e{run_at}_{idx + 1:05d}.json")
+            futures.append(executor.submit(process_entries_chunk, idx, chunk_data, output_file, len(chunks), run_at))
+        
         for future in concurrent.futures.as_completed(futures):
             pass
-
-        spinner.succeed("All tasks completed.")
-
+        
+        spinner.succeed("All chunks completed.")
+    
     except KeyboardInterrupt:
         print("\n")
         spinner.fail("User interrupted.")
         executor.shutdown(wait=False)
         os._exit(1)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python trans-local.py <source folder OR entries.json> <output folder>")
+        sys.exit(1)
+
+    source_input = sys.argv[1]
+    output_folder = sys.argv[2]
+
+    # Detect mode: file (entries.json) or folder
+    if os.path.isfile(source_input) and source_input.endswith(".json"):
+        # Stream mode: process entries.json in chunks
+        print(f"📂 Stream mode: Processing {source_input}")
+        process_entries_file(source_input, output_folder)
+    elif os.path.isdir(source_input):
+        # Original folder mode
+        missing_folder = source_input
+        
+        spinner = Halo(text="Processing", spinner="dots")
+        
+        files = sorted(os.listdir(missing_folder))
+        json_files = [f for f in files if f.endswith(".json") and not f.startswith("._")]
+        
+        if not json_files:
+            spinner.warn(f"No JSON files found in '{missing_folder}'.")
+            sys.exit(0)
+
+        load_global_translations(output_folder, spinner)
+        spinner.start()
+
+        now = datetime.now()
+        run_at = (
+            f"{now.strftime('%y')}"
+            f"{now.strftime('%V')}"
+            f"{now.strftime('%u')}"
+            f"{now.strftime('%H')}"
+            f"{now.strftime('%M')}"
+        )
+
+        default_workers = os.cpu_count() or 1
+        worker_count = int(os.getenv("WORKER_COUNT", str(default_workers)))
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
+        
+        try:
+            futures = []
+            for idx, filename in enumerate(json_files):
+                new_filename = replace_filename_pattern(filename, run_at)
+                input_file = os.path.join(missing_folder, filename)
+
+                if new_filename == filename:
+                    output_file = os.path.join(output_folder, f"t{run_at}_{filename}")
+                else:
+                    output_file = os.path.join(output_folder, new_filename)
+
+                futures.append(executor.submit(process_file, idx, filename, input_file, output_file, len(json_files)))
+
+            for future in concurrent.futures.as_completed(futures):
+                pass
+
+            spinner.succeed("All tasks completed.")
+
+        except KeyboardInterrupt:
+            print("\n")
+            spinner.fail("User interrupted.")
+            executor.shutdown(wait=False)
+            os._exit(1)
+    else:
+        print(f"Error: '{source_input}' is not a valid folder or .json file.")
+        sys.exit(1)
